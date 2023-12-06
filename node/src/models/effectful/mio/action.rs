@@ -6,20 +6,6 @@ use crate::automaton::{
 };
 
 #[derive(Clone)]
-pub enum TcpListenResult {
-    Success,
-    InvalidAddress,
-    Error(String),
-}
-
-#[derive(Clone)]
-pub enum TcpAcceptResult {
-    Success,
-    WouldBlock,
-    Error(String),
-}
-
-#[derive(Clone)]
 pub enum TcpWriteResult {
     WrittenAll,
     WrittenPartial(usize),
@@ -79,6 +65,7 @@ pub enum MioAction {
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollEvents {
+        uid: Uid,             // request uid (passed to the completion routine)
         poll: Uid,            // created by PollCreate
         events: Uid,          // created by EventsCreate
         timeout: Option<u64>, // timeout in milliseconds
@@ -92,16 +79,15 @@ pub enum MioAction {
     TcpListen {
         uid: Uid,
         address: String,
-        on_completion: CompletionRoutine<(Uid, TcpListenResult)>,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     TcpAccept {
         uid: Uid,
         listener: Uid, // created by TcpListen
-        on_completion: CompletionRoutine<(Uid, TcpAcceptResult)>,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     TcpWrite {
-        // not associated to any resources but passed back to the completion routine
-        uid: Uid,
+        uid: Uid, // request uid (passed to the completion routine)
         connection: Uid,
         // Strictly speaking, we should pass a copy here instead of referencing memory,
         // but the Rc guarantees immutability, allowing safe and efficient data sharing.
@@ -116,7 +102,6 @@ pub enum MioAction {
         on_completion: CompletionRoutine<(Uid, TcpReadResult)>,
     },
 }
-
 
 impl Action for MioAction {
     const KIND: ActionKind = ActionKind::Output;

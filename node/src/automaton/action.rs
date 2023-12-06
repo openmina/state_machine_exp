@@ -37,7 +37,7 @@ use std::{
 //    They don't have access to the state-machine state but they access state that is
 //    specific to the `OutputModel`.
 //
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub enum ActionKind {
     Pure,
     Input,
@@ -81,7 +81,7 @@ impl AnyAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct CompletionRoutine<R: Clone>(fn(R) -> AnyAction);
 
 impl<R: Clone> CompletionRoutine<R> {
@@ -125,7 +125,7 @@ impl Dispatcher {
     {
         let action = on_completion.make(result);
         assert_ne!(action.id, TypeId::of::<AnyAction>());
-        assert_eq!(action.kind, ActionKind::Input);
+        assert!(matches!(action.kind, ActionKind::Input));
         self.queue.push_back(action);
     }
 }

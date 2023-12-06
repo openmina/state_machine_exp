@@ -40,6 +40,7 @@ impl OutputModel for MioState {
                 );
             }
             MioAction::PollEvents {
+                uid,
                 poll,
                 events,
                 timeout,
@@ -47,7 +48,7 @@ impl OutputModel for MioState {
             } => {
                 dispatcher.completion_dispatch(
                     &on_completion,
-                    (events, self.poll_events(poll, events, timeout)),
+                    (uid, self.poll_events(poll, events, timeout)),
                 );
             }
             MioAction::EventsCreate {

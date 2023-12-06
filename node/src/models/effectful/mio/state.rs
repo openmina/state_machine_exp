@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::automaton::state::{Objects, Uid};
 
 use super::action::{
-    MioEvent, PollEventsResult, TcpAcceptResult, TcpListenResult, TcpReadResult, TcpWriteResult,
+    MioEvent, PollEventsResult, TcpReadResult, TcpWriteResult,
 };
 
 #[derive(Debug)]
@@ -186,28 +186,27 @@ impl MioState {
         self.new_obj(uid, Events::with_capacity(capacity));
     }
 
-    pub fn tcp_listen(&mut self, uid: Uid, address: String) -> TcpListenResult {
+    pub fn tcp_listen(&mut self, uid: Uid, address: String) -> Result<(), String> {
         match address.parse() {
             Ok(address) => match TcpListener::bind(address) {
                 Ok(tcp_listener) => {
                     self.new_obj(uid, tcp_listener);
-                    TcpListenResult::Success
+                    Ok(())
                 }
-                Err(error) => TcpListenResult::Error(error.to_string()),
+                Err(error) => Err(error.to_string()),
             },
-            Err(_) => TcpListenResult::InvalidAddress,
+            Err(error) => Err(error.to_string()),
         }
     }
 
-    pub fn tcp_accept(&mut self, uid: Uid, listener: Uid) -> TcpAcceptResult {
+    pub fn tcp_accept(&mut self, uid: Uid, listener: Uid) -> Result<(), String> {
         let result = self.obj_as_tcp_listener(listener).accept();
 
         match result {
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => TcpAcceptResult::WouldBlock,
-            Err(err) => TcpAcceptResult::Error(err.to_string()),
+            Err(err) => Err(err.to_string()),
             Ok((stream, address)) => {
                 self.new_obj(uid, TcpConnection { stream, address });
-                TcpAcceptResult::Success
+                Ok(())
             }
         }
     }
