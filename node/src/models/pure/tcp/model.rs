@@ -160,6 +160,8 @@ fn handle_poll<Substate: ModelState>(
     let this: &mut TcpState = state.models.state_mut();
     assert!(matches!(this.status, Status::Ready { .. }));
 
+    let mut remove_obj = true;
+
     match result {
         PollEventsResult::Events(ref events) => {
             // update TCP object events (even for UIDs that were not requested)
@@ -191,6 +193,7 @@ fn handle_poll<Substate: ModelState>(
             let poll = this.status.poll_uid();
             let events = this.status.events_uid();
 
+            remove_obj = false;
             dispatcher.dispatch(MioAction::PollEvents {
                 uid,
                 poll,
@@ -203,7 +206,9 @@ fn handle_poll<Substate: ModelState>(
         }
     }
 
-    this.remove_obj(uid);
+    if remove_obj {
+        this.remove_obj(uid)
+    }
 }
 
 fn handle_send<Substate: ModelState>(
