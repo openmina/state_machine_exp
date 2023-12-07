@@ -215,7 +215,6 @@ impl MioState {
         let TcpConnection { stream, .. } = &mut *self.obj_as_tcp_connection_mut(connection);
 
         match stream.write(data) {
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => TcpWriteResult::WouldBlock,
             Err(err) if err.kind() == io::ErrorKind::Interrupted => TcpWriteResult::Interrupted,
             Err(err) => TcpWriteResult::Error(err.to_string()),
             Ok(written) if written < data.len() => TcpWriteResult::WrittenPartial(written),
@@ -228,7 +227,6 @@ impl MioState {
         let mut recv_buf = vec![0u8; len_bytes];
 
         match stream.read(&mut recv_buf) {
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => TcpReadResult::WouldBlock,
             Err(err) if err.kind() == io::ErrorKind::Interrupted => TcpReadResult::Interrupted,
             Err(err) => TcpReadResult::Error(err.to_string()),
             Ok(0) => TcpReadResult::ConnectionClosed,

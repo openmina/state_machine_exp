@@ -1,2 +1,2 @@
 pub mod effectful;
-//pub mod pure;
+pub mod pure;

@@ -9,7 +9,6 @@ use crate::automaton::{
 pub enum TcpWriteResult {
     WrittenAll,
     WrittenPartial(usize),
-    WouldBlock,
     Interrupted,
     Error(String),
 }
@@ -22,7 +21,6 @@ pub enum TcpReadResult {
         remaining: usize,
     },
     ConnectionClosed,
-    WouldBlock,
     Interrupted,
     Error(String),
 }
