@@ -8,7 +8,6 @@ use crate::{
     models::effectful::mio::action::{PollEventsResult, TcpWriteResult},
 };
 
-use super::state::ConnectionEvent;
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum InitResult {
@@ -19,6 +18,13 @@ pub enum InitResult {
 #[derive(Clone, Debug)]
 pub enum ListenerEvent {
     AcceptPending(usize),
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConnectionEvent {
+    Ready { recv: bool, send: bool },
     Closed,
     Error,
 }
@@ -43,7 +49,7 @@ pub enum RecvResult {
 
 pub enum TcpAction {
     Init {
-        uid: Uid, // TCP model instance
+        init_uid: Uid, // TCP model instance
         on_completion: CompletionRoutine<(Uid, InitResult)>,
     },
     Listen {
@@ -53,7 +59,7 @@ pub enum TcpAction {
     },
     Accept {
         uid: Uid,
-        listener: Uid,
+        listener_uid: Uid,
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Poll {
@@ -64,13 +70,13 @@ pub enum TcpAction {
     },
     Send {
         uid: Uid, // server instance
-        connection: Uid,
+        connection_uid: Uid,
         data: Rc<[u8]>,
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Recv {
         uid: Uid, // server instance
-        connection: Uid,
+        connection_uid: Uid,
         count: usize, // number of bytes to read
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
     },

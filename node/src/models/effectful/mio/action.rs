@@ -51,21 +51,21 @@ pub enum MioAction {
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollRegisterTcpServer {
-        poll: Uid,         // created by PollCreate
-        tcp_listener: Uid, // created by TcpListen
-        token: Uid,        // unique Token for MIO
+        poll_uid: Uid,         // created by PollCreate
+        tcp_listener_uid: Uid, // created by TcpListen
+        token: Uid,            // unique Token for MIO
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollRegisterTcpConnection {
-        poll: Uid,       // created by PollCreate
-        connection: Uid, // created by TcpAccept (TODO: outgoing connections)
-        token: Uid,      // unique Token for MIO
+        poll_uid: Uid,       // created by PollCreate
+        connection_uid: Uid, // created by TcpAccept (TODO: outgoing connections)
+        token: Uid,          // unique Token for MIO
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollEvents {
         uid: Uid,             // request uid (passed to the completion routine)
-        poll: Uid,            // created by PollCreate
-        events: Uid,          // created by EventsCreate
+        poll_uid: Uid,        // created by PollCreate
+        events_uid: Uid,      // created by EventsCreate
         timeout: Option<u64>, // timeout in milliseconds
         on_completion: CompletionRoutine<(Uid, PollEventsResult)>,
     },
@@ -81,12 +81,12 @@ pub enum MioAction {
     },
     TcpAccept {
         uid: Uid,
-        listener: Uid, // created by TcpListen
+        listener_uid: Uid, // created by TcpListen
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     TcpWrite {
         uid: Uid, // request uid (passed to the completion routine)
-        connection: Uid,
+        connection_uid: Uid,
         // Strictly speaking, we should pass a copy here instead of referencing memory,
         // but the Rc guarantees immutability, allowing safe and efficient data sharing.
         data: Rc<[u8]>,
@@ -95,8 +95,8 @@ pub enum MioAction {
     TcpRead {
         // not associated to any resources but passed back to the completion routine
         uid: Uid,
-        connection: Uid,
-        len_bytes: usize, // max number of bytes to read
+        connection_uid: Uid,
+        len: usize, // max number of bytes to read
         on_completion: CompletionRoutine<(Uid, TcpReadResult)>,
     },
 }

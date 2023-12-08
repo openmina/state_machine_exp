@@ -12,8 +12,8 @@ impl OutputModel for MioState {
                 dispatcher.completion_dispatch(&on_completion, (uid, self.poll_create(uid)));
             }
             MioAction::PollRegisterTcpServer {
-                poll,
-                tcp_listener,
+                poll_uid,
+                tcp_listener_uid,
                 token,
                 on_completion,
             } => {
@@ -21,13 +21,13 @@ impl OutputModel for MioState {
                     &on_completion,
                     (
                         token,
-                        self.poll_register_tcp_server(poll, tcp_listener, token),
+                        self.poll_register_tcp_server(&poll_uid, &tcp_listener_uid, token),
                     ),
                 );
             }
             MioAction::PollRegisterTcpConnection {
-                poll,
-                connection,
+                poll_uid,
+                connection_uid,
                 token,
                 on_completion,
             } => {
@@ -35,20 +35,20 @@ impl OutputModel for MioState {
                     &on_completion,
                     (
                         token,
-                        self.poll_register_tcp_connection(poll, connection, token),
+                        self.poll_register_tcp_connection(&poll_uid, &connection_uid, token),
                     ),
                 );
             }
             MioAction::PollEvents {
                 uid,
-                poll,
-                events,
+                poll_uid,
+                events_uid,
                 timeout,
                 on_completion,
             } => {
                 dispatcher.completion_dispatch(
                     &on_completion,
-                    (uid, self.poll_events(poll, events, timeout)),
+                    (uid, self.poll_events(&poll_uid, &events_uid, timeout)),
                 );
             }
             MioAction::EventsCreate {
@@ -69,30 +69,34 @@ impl OutputModel for MioState {
             }
             MioAction::TcpAccept {
                 uid,
-                listener,
-                on_completion,
-            } => {
-                dispatcher
-                    .completion_dispatch(&on_completion, (uid, self.tcp_accept(uid, listener)));
-            }
-            MioAction::TcpWrite {
-                uid,
-                connection,
-                data,
-                on_completion,
-            } => {
-                dispatcher
-                    .completion_dispatch(&on_completion, (uid, self.tcp_write(connection, &data)));
-            }
-            MioAction::TcpRead {
-                uid,
-                connection,
-                len_bytes,
+                listener_uid,
                 on_completion,
             } => {
                 dispatcher.completion_dispatch(
                     &on_completion,
-                    (uid, self.tcp_read(connection, len_bytes)),
+                    (uid, self.tcp_accept(uid, &listener_uid)),
+                );
+            }
+            MioAction::TcpWrite {
+                uid,
+                connection_uid,
+                data,
+                on_completion,
+            } => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (uid, self.tcp_write(&connection_uid, &data)),
+                );
+            }
+            MioAction::TcpRead {
+                uid,
+                connection_uid,
+                len,
+                on_completion,
+            } => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (uid, self.tcp_read(&connection_uid, len)),
                 );
             }
         }

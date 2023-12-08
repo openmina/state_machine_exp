@@ -7,287 +7,366 @@ use crate::{
     models::{
         effectful::mio::action::{MioAction, PollEventsResult, TcpWriteResult},
         pure::tcp::{
+            self,
             action::{Event, PollResult},
-            state::{ConnectionEvent, ConnectionType},
+            state::{ConnectionType, PollRequest},
         },
     },
 };
 
 use super::{
-    action::{InitResult, TcpAction, TcpCallbackAction},
-    state::{Status, TcpState},
+    action::{ConnectionEvent, InitResult, TcpAction, TcpCallbackAction},
+    state::{SendRequest, Status, TcpState},
 };
 
 // Callback handlers
 
-fn handle_poll_create<Substate: ModelState>(
-    state: &mut State<Substate>,
+fn handle_poll_create(
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
+    events_uid: Uid,
     success: bool,
 ) {
-    let events_uid = state.new_uid();
-    let this: &mut TcpState = state.models.state_mut();
-    let init_uid = this.status.init_uid();
-    let on_completion = this.status.init_completion_routine();
+    assert!(matches!(tcp_state.status, Status::InitPollCreate { .. }));
 
-    if success {
-        // Dispatch next action to continue initialization
-        this.status.set_init_events(events_uid);
-        dispatcher.dispatch(MioAction::EventsCreate {
-            uid: events_uid,
-            capacity: 1024,
-            on_completion: CompletionRoutine::new(|uid| {
-                AnyAction::from(TcpCallbackAction::EventsCreate(uid))
-            }),
-        })
-    } else {
-        // Otherwise dispatch error to caller
-        this.status.set_init_error(init_uid);
-        dispatcher.completion_dispatch(
-            &on_completion,
-            (init_uid, InitResult::Error("PollCreate failed".to_string())),
-        );
+    if let Status::InitPollCreate {
+        init_uid,
+        poll_uid,
+        ref on_completion,
+    } = tcp_state.status
+    {
+        if success {
+            // Dispatch next action to continue initialization
+            dispatcher.dispatch(MioAction::EventsCreate {
+                uid: events_uid,
+                capacity: 1024,
+                on_completion: CompletionRoutine::new(|uid| {
+                    AnyAction::from(TcpCallbackAction::EventsCreate(uid))
+                }),
+            });
+
+            // next state
+            tcp_state.status = Status::InitEventsCreate {
+                init_uid,
+                poll_uid,
+                events_uid,
+                on_completion: on_completion.clone(),
+            };
+        } else {
+            // dispatch error to caller
+            dispatcher.completion_dispatch(
+                on_completion,
+                (init_uid, InitResult::Error("PollCreate failed".to_string())),
+            );
+
+            // set init error state
+            tcp_state.status = Status::InitError { init_uid };
+        }
     }
 }
 
-fn handle_events_create<Substate: ModelState>(
-    state: &mut State<Substate>,
-    dispatcher: &mut Dispatcher,
-) {
-    let this: &mut TcpState = state.models.state_mut();
-    let init_uid = this.status.init_uid();
-    let on_completion = this.status.init_completion_routine();
+fn handle_events_create(tcp_state: &mut TcpState, dispatcher: &mut Dispatcher) {
+    assert!(matches!(tcp_state.status, Status::InitEventsCreate { .. }));
 
-    this.status.set_init_ready();
-    dispatcher.completion_dispatch(&on_completion, (init_uid, InitResult::Success));
+    if let Status::InitEventsCreate {
+        init_uid,
+        poll_uid,
+        events_uid,
+        ref on_completion,
+    } = tcp_state.status
+    {
+        dispatcher.completion_dispatch(&on_completion, (init_uid, InitResult::Success));
+
+        tcp_state.status = Status::Ready {
+            init_uid,
+            poll_uid,
+            events_uid,
+        };
+    }
 }
 
-fn handle_listen<Substate: ModelState>(
-    state: &mut State<Substate>,
+fn handle_listen(
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
-    uid: Uid,
+    uid: &Uid,
     result: Result<(), String>,
 ) {
-    let this: &mut TcpState = state.models.state_mut();
-
     dispatcher.completion_dispatch(
-        &this.obj_as_listener(uid).on_completion,
-        (uid, result.clone()),
+        &tcp_state.get_listener(uid).on_completion,
+        (*uid, result.clone()),
     );
 
     if result.is_err() {
-        this.remove_obj(uid);
+        tcp_state.remove_listener(uid);
     }
 }
 
-fn handle_accept<Substate: ModelState>(
-    state: &mut State<Substate>,
+fn handle_accept(
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
-    uid: Uid,
+    uid: &Uid,
     result: Result<(), String>,
 ) {
-    let this: &mut TcpState = state.models.state_mut();
+    let connection = tcp_state.get_connection(uid);
+    assert!(matches!(connection.conn_type, ConnectionType::Incoming));
 
-    {
-        let connection = this.obj_as_connection(uid);
-        assert!(matches!(connection.conn_type, ConnectionType::Incoming));
-
-        dispatcher.completion_dispatch(&connection.on_completion, (uid, result.clone()));
-    }
+    dispatcher.completion_dispatch(&connection.on_completion, (*uid, result.clone()));
 
     if result.is_err() {
-        this.remove_obj(uid)
+        tcp_state.remove_connection(uid)
     }
 }
 
-fn handle_pending_send_requests(this: &mut TcpState, dispatcher: &mut Dispatcher) {
-    for uid in this.pending_send_requests() {
-        let mut remove_obj = false;
-        {
-            let mut request = this.obj_as_send_request_mut(uid);
-            let mut connection = this.obj_as_connection_mut(request.connection);
+fn handle_pending_send_requests_aux(
+    tcp_state: &mut TcpState,
+    dispatcher: &mut Dispatcher,
+    purge_requests: &mut Vec<Uid>,
+    dispatched_requests: &mut Vec<Uid>,
+) {
+    for (
+        &uid,
+        SendRequest {
+            connection_uid,
+            data,
+            bytes_sent,
+            send_on_poll: _,
+            on_completion,
+        },
+    ) in tcp_state.pending_send_requests()
+    {
+        let event = tcp_state.get_connection(&connection_uid).events();
 
-            if let Some(Event::Connection(event)) = connection.get_events() {
-                match event {
-                    ConnectionEvent::Ready { send: true, recv } => {
-                        // remove send event since we might report events back to caller
-                        connection.set_events(ConnectionEvent::Ready { send: false, recv });
-                        // don't handle it again unless the `TcpWrite`` action dispatched next gets
-                        // interrupted or does a partial write.
-                        request.send_on_poll = false;
-                        dispatcher.dispatch(MioAction::TcpWrite {
-                            uid,
-                            connection: request.connection,
-                            data: (&request.data[request.bytes_sent..]).into(),
-                            on_completion: CompletionRoutine::new(|(uid, result)| {
-                                AnyAction::from(TcpCallbackAction::Send { uid, result })
-                            }),
-                        })
-                    }
-                    ConnectionEvent::Ready { send: false, .. } => (),
-                    ConnectionEvent::Closed => {
-                        dispatcher.completion_dispatch(
-                            &request.on_completion,
-                            (uid, Err("Connection closed".to_string())),
-                        );
-                        remove_obj = true;
-                    }
-                    ConnectionEvent::Error => {
-                        dispatcher.completion_dispatch(
-                            &request.on_completion,
-                            (uid, Err("Connection error".to_string())),
-                        );
-                        remove_obj = true;
-                    }
-                }
-            } else {
-                unreachable!()
+        match event {
+            ConnectionEvent::Ready { send: true, .. } => {
+                dispatcher.dispatch(MioAction::TcpWrite {
+                    uid,
+                    connection_uid: *connection_uid,
+                    data: (&data[*bytes_sent..]).into(),
+                    on_completion: CompletionRoutine::new(|(uid, result)| {
+                        AnyAction::from(TcpCallbackAction::Send { uid, result })
+                    }),
+                });
+
+                dispatched_requests.push(uid);
+            }
+            ConnectionEvent::Ready { send: false, .. } => (),
+            ConnectionEvent::Closed => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (uid, Err("Connection closed".to_string())),
+                );
+
+                purge_requests.push(uid);
+            }
+            ConnectionEvent::Error => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (uid, Err("Connection error".to_string())),
+                );
+
+                purge_requests.push(uid);
             }
         }
-
-        if remove_obj {
-            this.remove_obj(uid)
-        }
     }
 }
 
-fn handle_poll<Substate: ModelState>(
-    state: &mut State<Substate>,
+fn handle_pending_send_requests(tcp_state: &mut TcpState, dispatcher: &mut Dispatcher) {
+    let mut purge_requests = Vec::new();
+    let mut dispatched_requests = Vec::new();
+
+    handle_pending_send_requests_aux(
+        tcp_state,
+        dispatcher,
+        &mut purge_requests,
+        &mut dispatched_requests,
+    );
+
+    let event_reset_list: Vec<Uid> = dispatched_requests
+        .iter()
+        .map(|uid| {
+            let SendRequest {
+                connection_uid,
+                send_on_poll,
+                ..
+            } = tcp_state.get_send_request_mut(&uid);
+            // we won't handle this request here again, unless the next
+            // `TcpWrite` action is interrupted/partial...
+            *send_on_poll = false;
+            *connection_uid
+        })
+        .collect();
+
+    for connection_uid in event_reset_list {
+        let ConnectionEvent::Ready { send, .. } =
+            tcp_state.get_connection_mut(&connection_uid).events_mut()
+        else {
+            unreachable!()
+        };
+        // we just dispatched a `TcpWrite` to this connection
+        // so "send ready" is no longer true...
+        *send = false;
+    }
+
+    // remove requests for invalid or closed connections
+    for uid in purge_requests.iter() {
+        tcp_state.remove_send_request(uid)
+    }
+}
+
+fn handle_poll(
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     uid: Uid,
     result: PollEventsResult,
 ) {
-    let this: &mut TcpState = state.models.state_mut();
-    assert!(matches!(this.status, Status::Ready { .. }));
-
-    let mut remove_obj = true;
+    assert!(tcp_state.is_ready());
 
     match result {
         PollEventsResult::Events(ref events) => {
             // update TCP object events (even for UIDs that were not requested)
             for mio_event in events.iter() {
-                this.add_obj_event(mio_event)
+                tcp_state.update_events(mio_event)
             }
 
-            handle_pending_send_requests(this, dispatcher);
+            handle_pending_send_requests(tcp_state, dispatcher);
 
-            let request = this.obj_as_poll_request(uid);
+            let request = tcp_state.get_poll_request(&uid);
             // collect events from state for the requested objects
-            let mut events = Vec::new();
-
-            for obj_uid in request.objects.iter().cloned() {
-                if let Some(event) = this.get_obj_events(obj_uid) {
-                    events.push((obj_uid, event))
-                }
-            }
+            let events: Vec<(Uid, Event)> = request
+                .objects
+                .iter()
+                .filter_map(|uid| tcp_state.get_events(uid))
+                .collect();
 
             dispatcher
                 .completion_dispatch(&request.on_completion, (uid, PollResult::Events(events)));
+            tcp_state.remove_poll_request(&uid)
         }
-        PollEventsResult::Error(err) => dispatcher.completion_dispatch(
-            &this.obj_as_poll_request(uid).on_completion,
-            (uid, PollResult::Error(err)),
-        ),
+        PollEventsResult::Error(err) => {
+            let PollRequest { on_completion, .. } = tcp_state.get_poll_request(&uid);
+            dispatcher.completion_dispatch(&on_completion, (uid, PollResult::Error(err)));
+            tcp_state.remove_poll_request(&uid)
+        }
         PollEventsResult::Interrupted => {
             // if the syscall was interrupted we re-dispatch the MIO action
-            let poll = this.status.poll_uid();
-            let events = this.status.events_uid();
+            let PollRequest { timeout, .. } = *tcp_state.get_poll_request(&uid);
+            let Status::Ready {
+                init_uid: _,
+                poll_uid,
+                events_uid,
+            } = tcp_state.status
+            else {
+                unreachable!()
+            };
 
-            remove_obj = false;
             dispatcher.dispatch(MioAction::PollEvents {
                 uid,
-                poll,
-                events,
-                timeout: this.obj_as_poll_request(uid).timeout,
+                poll_uid,
+                events_uid,
+                timeout,
                 on_completion: CompletionRoutine::new(|(uid, result)| {
                     AnyAction::from(TcpCallbackAction::Poll { uid, result })
                 }),
             })
         }
     }
+}
 
-    if remove_obj {
-        this.remove_obj(uid)
+fn handle_send_aux(
+    uid: Uid,
+    result: TcpWriteResult,
+    request: &mut SendRequest,
+    dispatcher: &mut Dispatcher,
+) -> bool {
+    match result {
+        TcpWriteResult::WrittenAll => {
+            // Send complete, notify caller
+            dispatcher.completion_dispatch(&request.on_completion, (uid, Ok(())));
+            true
+        }
+        TcpWriteResult::Error(error) => {
+            // Send failed, notify caller
+            dispatcher.completion_dispatch(&request.on_completion, (uid, Err(error)));
+            true
+        }
+        TcpWriteResult::WrittenPartial(count) => {
+            request.bytes_sent += count;
+            false
+        }
+        TcpWriteResult::Interrupted => false,
     }
 }
 
-fn handle_send<Substate: ModelState>(
-    state: &mut State<Substate>,
+fn dispatch_send(
+    tcp_state: &TcpState,
+    dispatcher: &mut Dispatcher,
+    uid: Uid,
+    set_send_on_poll: &mut bool,
+) -> bool {
+    let SendRequest {
+        connection_uid,
+        data,
+        bytes_sent,
+        send_on_poll: _,
+        on_completion,
+    } = tcp_state.get_send_request(&uid);
+    let event = tcp_state.get_connection(connection_uid).events();
+
+    match event {
+        ConnectionEvent::Ready { send: true, .. } => {
+            dispatcher.dispatch(MioAction::TcpWrite {
+                uid,
+                connection_uid: *connection_uid,
+                data: (&data[*bytes_sent..]).into(),
+                on_completion: CompletionRoutine::new(|(uid, result)| {
+                    AnyAction::from(TcpCallbackAction::Send { uid, result })
+                }),
+            });
+        }
+        ConnectionEvent::Ready { send: false, .. } => *set_send_on_poll = true,
+        ConnectionEvent::Closed => {
+            // Send failed, notify caller
+            dispatcher
+                .completion_dispatch(&on_completion, (uid, Err("Connection closed".to_string())));
+            return true;
+        }
+        ConnectionEvent::Error => {
+            // Send failed, notify caller
+            dispatcher
+                .completion_dispatch(&on_completion, (uid, Err("Connection error".to_string())));
+            return true;
+        }
+    }
+    return false;
+}
+
+fn handle_send(
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     uid: Uid,
     result: TcpWriteResult,
 ) {
-    let this: &mut TcpState = state.models.state_mut();
-    assert!(matches!(this.status, Status::Ready { .. }));
+    assert!(tcp_state.is_ready());
 
-    let mut remove_obj = false;
+    let completed = handle_send_aux(
+        uid,
+        result,
+        tcp_state.get_send_request_mut(&uid),
+        dispatcher,
+    );
+    let mut remove_request = completed;
 
-    {
-        let mut redispatch = false;
-        let mut request = this.obj_as_send_request_mut(uid);
+    // We might need to redispatch if the previous send was incomplete/interrupted.
+    if !completed {
+        let mut set_send_on_poll = false;
+        remove_request = dispatch_send(tcp_state, dispatcher, uid, &mut set_send_on_poll);
 
-        match result {
-            TcpWriteResult::WrittenAll => {
-                // Send complete, notify caller
-                dispatcher.completion_dispatch(&request.on_completion, (uid, Ok(())));
-                remove_obj = true;
-            }
-            TcpWriteResult::Error(error) => {
-                // Send failed, notify caller
-                dispatcher.completion_dispatch(&request.on_completion, (uid, Err(error)));
-                remove_obj = true;
-            }
-            TcpWriteResult::WrittenPartial(count) => {
-                request.bytes_sent += count;
-                redispatch = true;
-            }
-            TcpWriteResult::Interrupted => redispatch = true,
-        }
-
-        // Previous send was interrupted or partial, re-send `TcpWrite`
-        if redispatch {
-            // Check connection status before redispatching
-            if let Some(Event::Connection(event)) =
-                this.obj_as_connection(request.connection).get_events()
-            {
-                match event {
-                    ConnectionEvent::Ready { send: true, .. } => {
-                        request.send_on_poll = false;
-                        dispatcher.dispatch(MioAction::TcpWrite {
-                            uid,
-                            connection: request.connection,
-                            data: (&request.data[request.bytes_sent..]).into(),
-                            on_completion: CompletionRoutine::new(|(uid, result)| {
-                                AnyAction::from(TcpCallbackAction::Send { uid, result })
-                            }),
-                        })
-                    }
-                    ConnectionEvent::Ready { send: false, .. } => request.send_on_poll = true,
-                    ConnectionEvent::Closed => {
-                        // Send failed, notify caller
-                        dispatcher.completion_dispatch(
-                            &request.on_completion,
-                            (uid, Err("Connection closed".to_string())),
-                        );
-                        remove_obj = true;
-                    }
-                    ConnectionEvent::Error => {
-                        // Send failed, notify caller
-                        dispatcher.completion_dispatch(
-                            &request.on_completion,
-                            (uid, Err("Connection error".to_string())),
-                        );
-                        remove_obj = true;
-                    }
-                }
-            } else {
-                unreachable!()
-            }
-        }
+        let SendRequest { send_on_poll, .. } = tcp_state.get_send_request_mut(&uid);
+        *send_on_poll = set_send_on_poll;
     }
 
-    if remove_obj {
-        this.remove_obj(uid)
+    if remove_request {
+        tcp_state.remove_send_request(&uid)
     }
 }
 
@@ -301,17 +380,24 @@ impl InputModel for TcpState {
     ) {
         match action {
             TcpCallbackAction::PollCreate { uid: _, success } => {
-                handle_poll_create(state, dispatcher, success)
+                let events_uid = state.new_uid();
+                handle_poll_create(state.models.state_mut(), dispatcher, events_uid, success)
             }
-            TcpCallbackAction::EventsCreate(_uid) => handle_events_create(state, dispatcher),
+            TcpCallbackAction::EventsCreate(_uid) => {
+                handle_events_create(state.models.state_mut(), dispatcher)
+            }
             TcpCallbackAction::Listen { uid, result } => {
-                handle_listen(state, dispatcher, uid, result)
+                handle_listen(state.models.state_mut(), dispatcher, &uid, result)
             }
             TcpCallbackAction::Accept { uid, result } => {
-                handle_accept(state, dispatcher, uid, result)
+                handle_accept(state.models.state_mut(), dispatcher, &uid, result)
             }
-            TcpCallbackAction::Poll { uid, result } => handle_poll(state, dispatcher, uid, result),
-            TcpCallbackAction::Send { uid, result } => handle_send(state, dispatcher, uid, result),
+            TcpCallbackAction::Poll { uid, result } => {
+                handle_poll(state.models.state_mut(), dispatcher, uid, result)
+            }
+            TcpCallbackAction::Send { uid, result } => {
+                handle_send(state.models.state_mut(), dispatcher, uid, result)
+            }
         }
     }
 }
@@ -326,13 +412,17 @@ impl PureModel for TcpState {
     ) {
         match action {
             TcpAction::Init {
-                uid: init_uid,
+                init_uid,
                 on_completion,
             } => {
                 let poll_uid = state.new_uid();
-                let this: &mut TcpState = state.models.state_mut();
+                let tcp_state: &mut TcpState = state.models.state_mut();
 
-                this.status.set_init_poll(init_uid, poll_uid, on_completion);
+                tcp_state.status = Status::InitPollCreate {
+                    init_uid,
+                    poll_uid,
+                    on_completion,
+                };
                 dispatcher.dispatch(MioAction::PollCreate {
                     uid: poll_uid,
                     on_completion: CompletionRoutine::new(|(uid, success)| {
@@ -345,10 +435,10 @@ impl PureModel for TcpState {
                 address,
                 on_completion,
             } => {
-                let this: &mut TcpState = state.models.state_mut();
-                assert!(matches!(this.status, Status::Ready { .. }));
+                let tcp_state: &mut TcpState = state.models.state_mut();
+                assert!(tcp_state.is_ready());
 
-                this.new_listener(uid, address.clone(), on_completion);
+                tcp_state.new_listener(uid, address.clone(), on_completion);
                 dispatcher.dispatch(MioAction::TcpListen {
                     uid,
                     address,
@@ -359,16 +449,16 @@ impl PureModel for TcpState {
             }
             TcpAction::Accept {
                 uid,
-                listener,
+                listener_uid,
                 on_completion,
             } => {
-                let this: &mut TcpState = state.models.state_mut();
-                assert!(matches!(this.status, Status::Ready { .. }));
+                let tcp_state: &mut TcpState = state.models.state_mut();
+                assert!(tcp_state.is_ready());
 
-                this.new_incoming_connection(uid, on_completion);
+                tcp_state.new_incoming_connection(uid, on_completion);
                 dispatcher.dispatch(MioAction::TcpAccept {
                     uid,
-                    listener,
+                    listener_uid,
                     on_completion: CompletionRoutine::new(|(uid, result)| {
                         AnyAction::from(TcpCallbackAction::Accept { uid, result })
                     }),
@@ -380,17 +470,21 @@ impl PureModel for TcpState {
                 timeout,
                 on_completion,
             } => {
-                let this: &mut TcpState = state.models.state_mut();
-                assert!(matches!(this.status, Status::Ready { .. }));
+                let tcp_state: &mut TcpState = state.models.state_mut();
+                let Status::Ready {
+                    init_uid: _,
+                    poll_uid,
+                    events_uid,
+                } = tcp_state.status
+                else {
+                    unreachable!()
+                };
 
-                let poll = this.status.poll_uid();
-                let events = this.status.events_uid();
-
-                this.new_poll(uid, objects, timeout, on_completion);
+                tcp_state.new_poll(uid, objects, timeout, on_completion);
                 dispatcher.dispatch(MioAction::PollEvents {
                     uid,
-                    poll,
-                    events,
+                    poll_uid,
+                    events_uid,
                     timeout,
                     on_completion: CompletionRoutine::new(|(uid, result)| {
                         AnyAction::from(TcpCallbackAction::Poll { uid, result })
@@ -399,57 +493,36 @@ impl PureModel for TcpState {
             }
             TcpAction::Send {
                 uid,
-                connection,
+                connection_uid,
                 data,
                 on_completion,
             } => {
-                let this: &mut TcpState = state.models.state_mut();
-                let mut send_on_poll = false;
+                let tcp_state: &mut TcpState = state.models.state_mut();
+                assert!(tcp_state.is_ready());
 
-                assert!(matches!(this.status, Status::Ready { .. }));
+                let mut set_send_on_poll = false;
 
-                if let Some(Event::Connection(event)) =
-                    this.obj_as_connection(connection).get_events()
-                {
-                    match event {
-                        ConnectionEvent::Ready { send: true, .. } => {
-                            // If connection is ready, send it now
-                            dispatcher.dispatch(MioAction::TcpWrite {
-                                uid,
-                                connection,
-                                data: data.clone(),
-                                on_completion: CompletionRoutine::new(|(uid, result)| {
-                                    AnyAction::from(TcpCallbackAction::Send { uid, result })
-                                }),
-                            });
-                        }
-                        ConnectionEvent::Ready { send: false, .. } => {
-                            // otherwise wait for `handle_pending_send_requests` to take care of it
-                            send_on_poll = true;
-                        }
-                        // Bailout cases: notify caller (avoids `SendRequest` object creation).
-                        ConnectionEvent::Closed => {
-                            dispatcher.completion_dispatch(
-                                &on_completion,
-                                (uid, Err("Connection closed".to_string())),
-                            );
-                            return;
-                        }
-                        ConnectionEvent::Error => {
-                            dispatcher.completion_dispatch(
-                                &on_completion,
-                                (uid, Err("Connection error".to_string())),
-                            );
-                            return;
-                        }
-                    };
+                tcp_state.new_send_request(
+                    uid,
+                    connection_uid,
+                    data,
+                    set_send_on_poll,
+                    on_completion.clone(),
+                );
+
+                let remove_request =
+                    dispatch_send(tcp_state, dispatcher, uid, &mut set_send_on_poll);
+
+                let SendRequest { send_on_poll, .. } = tcp_state.get_send_request_mut(&uid);
+                *send_on_poll = set_send_on_poll;
+
+                if remove_request {
+                    tcp_state.remove_send_request(&uid)
                 }
-
-                this.new_send_request(uid, connection, data, send_on_poll, on_completion.clone());
             }
             TcpAction::Recv {
                 uid,
-                connection,
+                connection_uid,
                 count,
                 on_completion,
             } => todo!(),
