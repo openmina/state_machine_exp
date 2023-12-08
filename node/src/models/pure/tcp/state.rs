@@ -9,18 +9,10 @@ use crate::{
     models::effectful::mio::action::MioEvent,
 };
 
-use super::action::{ConnectionEvent, Event, InitResult, ListenerEvent, PollResult};
-
-#[derive(Debug)]
-pub enum ListenerStatus {
-    New,
-    Ready,
-    Error,
-}
+use super::action::{ConnectionEvent, Event, InitResult, ListenerEvent, PollResult, RecvResult};
 
 #[derive(Debug)]
 pub struct Listener {
-    pub status: ListenerStatus,
     pub address: String,
     pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     pub events: Option<ListenerEvent>,
@@ -32,7 +24,6 @@ impl Listener {
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
-            status: ListenerStatus::New,
             address,
             on_completion,
             events: None,
@@ -40,31 +31,43 @@ impl Listener {
     }
 
     pub fn update_events(&mut self, event: &MioEvent) {
-        let new_event = if event.error {
-            ListenerEvent::Error
-        } else if event.read_closed || event.write_closed {
-            ListenerEvent::Closed
-        } else {
-            let previous_event = &self.events;
-
-            match previous_event {
-                Some(ListenerEvent::Closed) => ListenerEvent::Closed, // TODO: log message that we keep previous event
-                Some(ListenerEvent::Error) => ListenerEvent::Error, // TODO: log message that we keep previous event
-                Some(ListenerEvent::AcceptPending(count)) => {
-                    ListenerEvent::AcceptPending(count.saturating_add(1))
-                }
-                None => ListenerEvent::AcceptPending(0),
-            }
+        let new_event = match event {
+            MioEvent { error: true, .. } => ListenerEvent::Error,
+            MioEvent {
+                read_closed,
+                write_closed,
+                ..
+            } if *read_closed || *write_closed => ListenerEvent::Closed,
+            _ => ListenerEvent::AcceptPending,
         };
 
-        self.events = Some(new_event);
+        if let Some(curr_event) = &mut self.events {
+            match curr_event {
+                ListenerEvent::Closed | ListenerEvent::Error => (), // TODO: log message saying we keep this event
+                ListenerEvent::AcceptPending | ListenerEvent::ConnectionAccepted => {
+                    *curr_event = new_event
+                }
+            }
+        } else {
+            self.events = Some(new_event);
+        }
     }
 
-    // pub fn get_events(&self) -> Option<Event> {
-    //     self.events
-    //         .as_ref()
-    //         .and_then(|ev| Some(Event::Listener(ev.clone())))
-    // }
+    pub fn events(&self) -> &ListenerEvent {
+        if let Some(event) = self.events.as_ref() {
+            event
+        } else {
+            panic!("Attempt to fetch events but not initialized yet")
+        }
+    }
+
+    pub fn events_mut(&mut self) -> &mut ListenerEvent {
+        if let Some(event) = self.events.as_mut() {
+            event
+        } else {
+            panic!("Attempt to fetch events but not initialized yet")
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -90,7 +93,7 @@ impl PollRequest {
 
 #[derive(Debug)]
 pub enum ConnectionType {
-    Incoming,
+    Incoming(Uid), // Listener Uid
     Outgoing,
 }
 
@@ -114,28 +117,29 @@ impl Connection {
     }
 
     pub fn update_events(&mut self, event: &MioEvent) {
-        let new_event = if event.error {
-            ConnectionEvent::Error
-        } else if event.read_closed || event.write_closed {
-            ConnectionEvent::Closed
-        } else {
-            let previous_event = &self.events;
-
-            match previous_event {
-                Some(ConnectionEvent::Closed) => ConnectionEvent::Closed, // TODO: log message that we keep previous event
-                Some(ConnectionEvent::Error) => ConnectionEvent::Error, // TODO: log message that we keep previous event
-                Some(ConnectionEvent::Ready { .. }) => ConnectionEvent::Ready {
-                    recv: event.readable,
-                    send: event.writable,
-                },
-                None => ConnectionEvent::Ready {
-                    recv: false,
-                    send: false,
-                },
-            }
+        let new_event = match event {
+            MioEvent { error: true, .. } => ConnectionEvent::Error,
+            MioEvent {
+                read_closed,
+                write_closed,
+                ..
+            } if *read_closed || *write_closed => ConnectionEvent::Closed,
+            MioEvent {
+                readable, writable, ..
+            } => ConnectionEvent::Ready {
+                recv: *readable,
+                send: *writable,
+            },
         };
 
-        self.events = Some(new_event);
+        if let Some(curr_event) = &mut self.events {
+            match curr_event {
+                ConnectionEvent::Closed | ConnectionEvent::Error => (), // TODO: log message saying we keep this event
+                ConnectionEvent::Ready { .. } => *curr_event = new_event,
+            }
+        } else {
+            self.events = Some(new_event);
+        }
     }
 
     pub fn events(&self) -> &ConnectionEvent {
@@ -182,6 +186,32 @@ impl SendRequest {
 }
 
 #[derive(Debug)]
+pub struct RecvRequest {
+    pub connection_uid: Uid,
+    pub data: Vec<u8>,
+    pub bytes_received: usize,
+    pub recv_on_poll: bool,
+    pub on_completion: CompletionRoutine<(Uid, RecvResult)>,
+}
+
+impl RecvRequest {
+    pub fn new(
+        connection_uid: Uid,
+        count: usize,
+        recv_on_poll: bool,
+        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+    ) -> Self {
+        Self {
+            connection_uid,
+            data: vec![0; count],
+            bytes_received: 0,
+            recv_on_poll,
+            on_completion,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Status {
     New,
     InitError {
@@ -211,6 +241,7 @@ pub struct TcpState {
     connection_objects: Objects<Connection>,
     poll_request_objects: Objects<PollRequest>,
     send_request_objects: Objects<SendRequest>,
+    recv_request_objects: Objects<RecvRequest>,
 }
 
 impl TcpState {
@@ -221,6 +252,7 @@ impl TcpState {
             connection_objects: Objects::<Connection>::new(),
             poll_request_objects: Objects::<PollRequest>::new(),
             send_request_objects: Objects::<SendRequest>::new(),
+            recv_request_objects: Objects::<RecvRequest>::new(),
         }
     }
 
@@ -264,17 +296,15 @@ impl TcpState {
         }
     }
 
-    pub fn new_incoming_connection(
+    pub fn new_connection(
         &mut self,
         uid: Uid,
+        conn_type: ConnectionType,
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     ) {
         if self
             .connection_objects
-            .insert(
-                uid,
-                Connection::new(ConnectionType::Incoming, on_completion),
-            )
+            .insert(uid, Connection::new(conn_type, on_completion))
             .is_some()
         {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -301,9 +331,35 @@ impl TcpState {
         }
     }
 
+    pub fn new_recv_request(
+        &mut self,
+        uid: Uid,
+        connection_uid: Uid,
+        count: usize,
+        recv_on_poll: bool,
+        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+    ) {
+        if self
+            .recv_request_objects
+            .insert(
+                uid,
+                RecvRequest::new(connection_uid, count, recv_on_poll, on_completion),
+            )
+            .is_some()
+        {
+            panic!("Attempt to re-use existing uid {:?}", uid)
+        }
+    }
+
     pub fn get_listener(&self, uid: &Uid) -> &Listener {
         self.listener_objects
             .get(uid)
+            .unwrap_or_else(|| panic!("Listener object (uid {:?}) not found", uid))
+    }
+
+    pub fn get_listener_mut(&mut self, uid: &Uid) -> &mut Listener {
+        self.listener_objects
+            .get_mut(uid)
             .unwrap_or_else(|| panic!("Listener object (uid {:?}) not found", uid))
     }
 
@@ -369,6 +425,34 @@ impl TcpState {
         self.send_request_objects.remove(uid).unwrap_or_else(|| {
             panic!(
                 "Attempt to remove an inexistent SendRequest (uid {:?})",
+                uid
+            )
+        });
+    }
+
+    pub fn get_recv_request(&self, uid: &Uid) -> &RecvRequest {
+        self.recv_request_objects
+            .get(uid)
+            .unwrap_or_else(|| panic!("RecvRequest object (uid {:?}) not found", uid))
+    }
+
+    pub fn get_recv_request_mut(&mut self, uid: &Uid) -> &mut RecvRequest {
+        self.recv_request_objects
+            .get_mut(uid)
+            .unwrap_or_else(|| panic!("RecvRequest object (uid {:?}) not found", uid))
+    }
+
+    pub fn pending_recv_requests(&self) -> Vec<(&Uid, &RecvRequest)> {
+        self.recv_request_objects
+            .iter()
+            .filter(|(_, request)| request.recv_on_poll)
+            .collect()
+    }
+
+    pub fn remove_recv_request(&mut self, uid: &Uid) {
+        self.recv_request_objects.remove(uid).unwrap_or_else(|| {
+            panic!(
+                "Attempt to remove an inexistent RecvRequest (uid {:?})",
                 uid
             )
         });

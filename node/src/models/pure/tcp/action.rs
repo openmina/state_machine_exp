@@ -5,9 +5,8 @@ use crate::{
         action::{Action, ActionKind, CompletionRoutine},
         state::Uid,
     },
-    models::effectful::mio::action::{PollEventsResult, TcpWriteResult},
+    models::effectful::mio::action::{PollEventsResult, TcpReadResult, TcpWriteResult},
 };
-
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum InitResult {
@@ -17,7 +16,8 @@ pub enum InitResult {
 
 #[derive(Clone, Debug)]
 pub enum ListenerEvent {
-    AcceptPending(usize),
+    AcceptPending,
+    ConnectionAccepted, // set by us when handling Accept action
     Closed,
     Error,
 }
@@ -35,17 +35,8 @@ pub enum Event {
     Connection(ConnectionEvent),
 }
 
-#[derive(Clone, Debug)]
-pub enum PollResult {
-    Events(Vec<(Uid, Event)>),
-    Error(String),
-}
-
-#[derive(Clone)]
-pub enum RecvResult {
-    Success(Rc<Vec<u8>>),
-    Error(String),
-}
+pub type PollResult = Result<Vec<(Uid, Event)>, String>;
+pub type RecvResult = Result<Vec<u8>, String>;
 
 pub enum TcpAction {
     Init {
@@ -107,6 +98,10 @@ pub enum TcpCallbackAction {
     Send {
         uid: Uid,
         result: TcpWriteResult,
+    },
+    Recv {
+        uid: Uid,
+        result: TcpReadResult,
     },
 }
 

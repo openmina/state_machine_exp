@@ -209,6 +209,8 @@ impl MioState {
     }
 
     pub fn tcp_read(&mut self, connection_uid: &Uid, len: usize) -> TcpReadResult {
+        assert_ne!(len, 0);
+
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(connection_uid)
@@ -221,16 +223,12 @@ impl MioState {
         match stream.read(&mut recv_buf) {
             Err(err) if err.kind() == io::ErrorKind::Interrupted => TcpReadResult::Interrupted,
             Err(err) => TcpReadResult::Error(err.to_string()),
-            Ok(0) => TcpReadResult::ConnectionClosed,
+            Ok(0) => TcpReadResult::Error("Connection closed".to_string()),
             Ok(read) if read < len => {
                 recv_buf.truncate(read);
-
-                TcpReadResult::ReadPartial {
-                    bytes_read: Rc::new(recv_buf),
-                    remaining: len - read,
-                }
+                TcpReadResult::ReadPartial(recv_buf)
             }
-            Ok(_) => TcpReadResult::ReadAll(Rc::new(recv_buf)),
+            Ok(_) => TcpReadResult::ReadAll(recv_buf),
         }
     }
 }

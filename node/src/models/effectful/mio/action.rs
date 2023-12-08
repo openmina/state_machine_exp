@@ -15,12 +15,8 @@ pub enum TcpWriteResult {
 
 #[derive(Clone)]
 pub enum TcpReadResult {
-    ReadAll(Rc<Vec<u8>>),
-    ReadPartial {
-        bytes_read: Rc<Vec<u8>>,
-        remaining: usize,
-    },
-    ConnectionClosed,
+    ReadAll(Vec<u8>),
+    ReadPartial(Vec<u8>),
     Interrupted,
     Error(String),
 }
