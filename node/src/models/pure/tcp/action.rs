@@ -60,13 +60,13 @@ pub enum TcpAction {
         on_completion: CompletionRoutine<(Uid, PollResult)>,
     },
     Send {
-        uid: Uid, // server instance
+        uid: Uid,
         connection_uid: Uid,
         data: Rc<[u8]>,
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Recv {
-        uid: Uid, // server instance
+        uid: Uid,
         connection_uid: Uid,
         count: usize, // number of bytes to read
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
@@ -90,6 +90,14 @@ pub enum TcpCallbackAction {
     Accept {
         uid: Uid,
         result: Result<(), String>,
+    },
+    RegisterConnection {
+        uid: Uid,
+        result: bool
+    },
+    RegisterListener {
+        uid: Uid,
+        result: bool
     },
     Poll {
         uid: Uid,

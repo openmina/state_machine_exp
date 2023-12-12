@@ -10,14 +10,14 @@ use crate::{
         effectful::mio::action::{MioAction, PollEventsResult, TcpReadResult, TcpWriteResult},
         pure::tcp::{
             action::{Event, ListenerEvent},
-            state::{ConnectionType, PollRequest},
+            state::{Connection, ConnectionType, PollRequest},
         },
     },
 };
 
 use super::{
     action::{ConnectionEvent, InitResult, TcpAction, TcpCallbackAction},
-    state::{RecvRequest, SendRequest, Status, TcpState},
+    state::{Listener, RecvRequest, SendRequest, Status, TcpState},
 };
 
 // Callback handlers
@@ -92,13 +92,40 @@ fn handle_listen(
     uid: &Uid,
     result: Result<(), String>,
 ) {
-    dispatcher.completion_dispatch(
-        &tcp_state.get_listener(uid).on_completion,
-        (*uid, result.clone()),
-    );
+    if result.is_ok() {
+        // If the listen operation was successful we register the listener in the MIO poll object.
+        let Status::Ready { poll_uid, .. } = tcp_state.status else {
+            unreachable!()
+        };
 
-    if result.is_err() {
+        // We will dispath the completion routine to the caller from `handle_register_listener`
+        dispatcher.dispatch(MioAction::PollRegisterTcpServer {
+            poll_uid,
+            tcp_listener_uid: *uid,
+            on_completion: CompletionRoutine::new(|(uid, result)| {
+                AnyAction::from(TcpCallbackAction::RegisterListener { uid, result })
+            }),
+        });
+    } else {
+        dispatcher.completion_dispatch(&tcp_state.get_listener(uid).on_completion, (*uid, result));
         tcp_state.remove_listener(uid);
+    }
+}
+
+fn handle_register_listener(
+    tcp_state: &mut TcpState,
+    dispatcher: &mut Dispatcher,
+    uid: &Uid,
+    result: bool,
+) {
+    let Listener { on_completion, .. } = tcp_state.get_listener(uid);
+
+    if result {
+        dispatcher.completion_dispatch(&on_completion, (*uid, Ok(())));
+    } else {
+        let error = format!("Error registering listener {:?}", uid);
+        dispatcher.completion_dispatch(&on_completion, (*uid, Err(error)));
+        tcp_state.remove_listener(uid)
     }
 }
 
@@ -108,21 +135,60 @@ fn handle_accept(
     uid: &Uid,
     result: Result<(), String>,
 ) {
-    let connection = tcp_state.get_connection(uid);
-    let ConnectionType::Incoming(listener_uid) = connection.conn_type else {
+    let Connection {
+        conn_type,
+        on_completion,
+        events: _,
+    } = tcp_state.get_connection(uid);
+    let ConnectionType::Incoming(listener_uid) = conn_type else {
         panic!(
             "Accept callback on invalid connection type (Uid: {:?}) conn_type: {:?}",
-            uid, connection.conn_type
+            uid, conn_type
         );
     };
 
-    dispatcher.completion_dispatch(&connection.on_completion, (*uid, result.clone()));
+    if result.is_ok() {
+        // If the connection accept was successful we register it in the MIO poll object.
+        let Status::Ready { poll_uid, .. } = tcp_state.status else {
+            unreachable!()
+        };
 
+        // We will dispath the completion routine to the caller from `handle_register_connection`
+        dispatcher.dispatch(MioAction::PollRegisterTcpConnection {
+            poll_uid,
+            connection_uid: *uid,
+            on_completion: CompletionRoutine::new(|(uid, result)| {
+                AnyAction::from(TcpCallbackAction::RegisterConnection { uid, result })
+            }),
+        });
+    } else {
+        // Dispatch error result now
+        dispatcher.completion_dispatch(&on_completion, (*uid, result.clone()));
+    }
+
+    let listener_uid = *listener_uid;
     let events = tcp_state.get_listener_mut(&listener_uid).events_mut();
     assert!(matches!(events, ListenerEvent::AcceptPending));
     *events = ListenerEvent::ConnectionAccepted;
 
     if result.is_err() {
+        tcp_state.remove_connection(uid)
+    }
+}
+
+fn handle_register_connection(
+    tcp_state: &mut TcpState,
+    dispatcher: &mut Dispatcher,
+    uid: &Uid,
+    result: bool,
+) {
+    let Connection { on_completion, .. } = tcp_state.get_connection(uid);
+
+    if result {
+        dispatcher.completion_dispatch(&on_completion, (*uid, Ok(())));
+    } else {
+        let error = format!("Error registering incoming connection {:?}", uid);
+        dispatcher.completion_dispatch(&on_completion, (*uid, Err(error)));
         tcp_state.remove_connection(uid)
     }
 }
@@ -557,12 +623,12 @@ fn handle_recv_aux(
 ) -> bool {
     match result {
         TcpReadResult::ReadAll(data) => {
-            // Send complete, notify caller
+            // Recv complete, notify caller
             dispatcher.completion_dispatch(&request.on_completion, (uid, Ok(data)));
             true
         }
         TcpReadResult::Error(error) => {
-            // Send failed, notify caller
+            // Recv failed, notify caller
             dispatcher.completion_dispatch(&request.on_completion, (uid, Err(error)));
             true
         }
@@ -598,6 +664,12 @@ impl InputModel for TcpState {
             }
             TcpCallbackAction::Accept { uid, result } => {
                 handle_accept(state.models.state_mut(), dispatcher, &uid, result)
+            }
+            TcpCallbackAction::RegisterConnection { uid, result } => {
+                handle_register_connection(state.models.state_mut(), dispatcher, &uid, result)
+            }
+            TcpCallbackAction::RegisterListener { uid, result } => {
+                handle_register_listener(state.models.state_mut(), dispatcher, &uid, result)
             }
             TcpCallbackAction::Poll { uid, result } => {
                 handle_poll(state.models.state_mut(), dispatcher, uid, result)
