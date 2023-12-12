@@ -49,13 +49,16 @@ pub enum MioAction {
     PollRegisterTcpServer {
         poll_uid: Uid,         // created by PollCreate
         tcp_listener_uid: Uid, // created by TcpListen
-        token: Uid,            // unique Token for MIO
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollRegisterTcpConnection {
         poll_uid: Uid,       // created by PollCreate
         connection_uid: Uid, // created by TcpAccept (TODO: outgoing connections)
-        token: Uid,          // unique Token for MIO
+        on_completion: CompletionRoutine<(Uid, bool)>,
+    },
+    PollDeregisterTcpConnection {
+        poll_uid: Uid,       // created by PollCreate
+        connection_uid: Uid, // created by TcpAccept (TODO: outgoing connections)
         on_completion: CompletionRoutine<(Uid, bool)>,
     },
     PollEvents {

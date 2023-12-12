@@ -63,36 +63,30 @@ impl MioState {
             .is_ok()
     }
 
-    pub fn poll_register_tcp_server(
-        &mut self,
-        poll_uid: &Uid,
-        tcp_listener_uid: &Uid,
-        token: Uid,
-    ) -> bool {
+    pub fn poll_register_tcp_server(&mut self, poll_uid: &Uid, tcp_listener_uid: Uid) -> bool {
         let mut tcp_listener_objects = self.tcp_listener_objects.borrow_mut();
 
         let tcp_listener = tcp_listener_objects
-            .get_mut(tcp_listener_uid)
+            .get_mut(&tcp_listener_uid)
             .unwrap_or_else(|| panic!("TcpListener object (uid {:?}) not found", tcp_listener_uid));
 
         if let Some(poll) = self.poll_objects.borrow().get(poll_uid) {
             poll.registry()
-                .register(tcp_listener, Token(token.into()), Interest::READABLE)
+                .register(
+                    tcp_listener,
+                    Token(tcp_listener_uid.into()),
+                    Interest::READABLE,
+                )
                 .is_ok()
         } else {
             panic!("Poll object not found (uid: {:?}", poll_uid)
         }
     }
 
-    pub fn poll_register_tcp_connection(
-        &mut self,
-        poll_uid: &Uid,
-        connection_uid: &Uid,
-        token: Uid,
-    ) -> bool {
+    pub fn poll_register_tcp_connection(&mut self, poll_uid: &Uid, connection_uid: Uid) -> bool {
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
 
-        let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(connection_uid)
+        let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(&connection_uid)
         else {
             panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
         };
@@ -101,10 +95,25 @@ impl MioState {
             poll.registry()
                 .register(
                     stream,
-                    Token(token.into()),
+                    Token(connection_uid.into()),
                     Interest::READABLE.add(Interest::WRITABLE),
                 )
                 .is_ok()
+        } else {
+            panic!("Poll object not found (uid: {:?}", poll_uid)
+        }
+    }
+
+    pub fn poll_deregister_tcp_connection(&mut self, poll_uid: &Uid, connection_uid: Uid) -> bool {
+        let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
+
+        let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(&connection_uid)
+        else {
+            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+        };
+
+        if let Some(poll) = self.poll_objects.borrow().get(poll_uid) {
+            poll.registry().deregister(stream).is_ok()
         } else {
             panic!("Poll object not found (uid: {:?}", poll_uid)
         }

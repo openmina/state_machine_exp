@@ -14,28 +14,39 @@ impl OutputModel for MioState {
             MioAction::PollRegisterTcpServer {
                 poll_uid,
                 tcp_listener_uid,
-                token,
                 on_completion,
             } => {
                 dispatcher.completion_dispatch(
                     &on_completion,
                     (
-                        token,
-                        self.poll_register_tcp_server(&poll_uid, &tcp_listener_uid, token),
+                        tcp_listener_uid,
+                        self.poll_register_tcp_server(&poll_uid, tcp_listener_uid),
                     ),
                 );
             }
             MioAction::PollRegisterTcpConnection {
                 poll_uid,
                 connection_uid,
-                token,
                 on_completion,
             } => {
                 dispatcher.completion_dispatch(
                     &on_completion,
                     (
-                        token,
-                        self.poll_register_tcp_connection(&poll_uid, &connection_uid, token),
+                        connection_uid,
+                        self.poll_register_tcp_connection(&poll_uid, connection_uid),
+                    ),
+                );
+            }
+            MioAction::PollDeregisterTcpConnection {
+                poll_uid,
+                connection_uid,
+                on_completion,
+            } => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (
+                        connection_uid,
+                        self.poll_deregister_tcp_connection(&poll_uid, connection_uid),
                     ),
                 );
             }
