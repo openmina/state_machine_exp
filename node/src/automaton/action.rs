@@ -60,15 +60,6 @@ pub struct AnyAction {
 }
 
 impl AnyAction {
-    // pub fn empty() -> Self {
-    //     Self {
-    //         id: TypeId::of::<()>(),
-    //         ptr: Box::new(()),
-    //         kind: ActionKind::Pure,
-    //         type_name: std::any::type_name::<()>(),
-    //     }
-    // }
-
     pub fn from<T: Action>(v: T) -> Self {
         // Panic when calling `AnyAction::from(AnyAction { .. })`
         assert_ne!(TypeId::of::<T>(), TypeId::of::<AnyAction>());
@@ -96,19 +87,19 @@ impl<R: Clone> CompletionRoutine<R> {
 
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
-}
-
-impl Default for Dispatcher {
-    fn default() -> Self {
-        Self {
-            queue: VecDeque::with_capacity(1024),
-        }
-    }
+    tick: fn() -> AnyAction,
 }
 
 impl Dispatcher {
-    pub fn next_action(&mut self) -> Option<AnyAction> {
-        self.queue.pop_front()
+    pub fn new(tick: fn() -> AnyAction) -> Self {
+        Self {
+            queue: VecDeque::with_capacity(1024),
+            tick,
+        }
+    }
+
+    pub fn next_action(&mut self) -> AnyAction {
+        self.queue.pop_front().unwrap_or((self.tick)())
     }
 
     pub fn dispatch<A: Action>(&mut self, action: A)

@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, any::Any};
 
-use rand::rngs::SmallRng;
+use rand::{rngs::SmallRng, SeedableRng};
 
 // An Uid is a simple way to implement descriptors to reference object between different Models.
 //
@@ -54,8 +54,8 @@ impl Uid {
 pub type Objects<T> = BTreeMap<Uid, T>;
 
 pub trait ModelState {
-    fn state<T>(&self) -> &T;
-    fn state_mut<T>(&mut self) -> &mut T;
+    fn state<T: 'static + Any>(&self) -> &T;
+    fn state_mut<T: 'static + Any>(&mut self) -> &mut T;
 }
 
 pub struct State<Substates: ModelState> {
@@ -70,15 +70,24 @@ pub struct State<Substates: ModelState> {
 }
 
 impl<Substates: ModelState> State<Substates> {
+    // TODO: implement proper initialization
+    pub fn from_substates(models: Substates) -> Self {
+        Self {
+            uid_source: Uid::default(),
+            rng: SmallRng::seed_from_u64(0),
+            models
+        }
+    }
+
     pub fn new_uid(&mut self) -> Uid {
         self.uid_source.next()
     }
 
-    pub fn substate<T>(&self) -> &T {
+    pub fn substate<T: 'static + Any>(&self) -> &T {
         self.models.state()
     }
 
-    pub fn substate_mut<T>(&mut self) -> &mut T {
+    pub fn substate_mut<T: 'static + Any>(&mut self) -> &mut T {
         self.models.state_mut()
     }
 }

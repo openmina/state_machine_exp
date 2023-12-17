@@ -29,15 +29,27 @@ impl<Substate: ModelState> RunnerBuilder<Substate> {
         self
     }
 
-    pub fn model_pure<M: PureModel>(mut self, model: Pure<M>) -> Self {
+    pub fn model_pure<M: PureModel>(mut self) -> Self {
         self.models
-            .insert(TypeId::of::<M::Action>(), Box::new(model).into_vtable());
+            .insert(TypeId::of::<M::Action>(), Pure::<M>::into_vtable2());
         self
     }
 
-    pub fn model_input<M: InputModel>(mut self, model: Input<M>) -> Self {
+    pub fn model_input<M: InputModel>(mut self) -> Self {
         self.models
-            .insert(TypeId::of::<M::Action>(), Box::new(model).into_vtable());
+            .insert(TypeId::of::<M::Action>(), Input::<M>::into_vtable2());
+        self
+    }
+
+    pub fn model_pure_and_input<M: PureModel + InputModel>(mut self) -> Self {
+        self.models.insert(
+            TypeId::of::<<M as PureModel>::Action>(),
+            Pure::<M>::into_vtable2(),
+        );
+        self.models.insert(
+            TypeId::of::<<M as InputModel>::Action>(),
+            Input::<M>::into_vtable2(),
+        );
         self
     }
 
@@ -62,10 +74,9 @@ impl<Substate: ModelState> Runner<Substate> {
 
     pub fn run(&mut self, mut dispatcher: Dispatcher) {
         loop {
-            while let Some(action) = dispatcher.next_action() {
-                self.process_action(action, &mut dispatcher)
-            }
-            //dispatcher.dispatch(/* top-most model poll action */);
+            let action = dispatcher.next_action();
+
+            self.process_action(action, &mut dispatcher)
         }
     }
 

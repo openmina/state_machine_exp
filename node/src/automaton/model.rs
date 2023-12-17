@@ -60,6 +60,17 @@ where
         AnyModel { model, vtable }
     }
 
+    fn into_vtable2<Substates: ModelState>() -> AnyModel<Substates> {
+        let model = Box::new(()); // placeholder
+        let vtable = ModelVTable {
+            process_pure: Self::process_pure,
+            process_input: Self::process_input,
+            process_output: Self::process_output,
+        };
+        AnyModel { model, vtable }
+    }
+
+
     fn process_pure<Substates: ModelState>(
         _state: &mut State<Substates>,
         _action: AnyAction,
@@ -148,7 +159,7 @@ where
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher);
 }
 
-pub struct Output<T: OutputModel>(T);
+pub struct Output<T: OutputModel>(pub T);
 
 impl<T: OutputModel> PrivateModel for Output<T> {
     fn process_output(state: &mut Box<dyn Any>, action: AnyAction, dispatcher: &mut Dispatcher) {
