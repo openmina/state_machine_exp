@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, mem};
 
-use crate::automaton::{
+use crate::{automaton::{
     action::CompletionRoutine,
     state::{Objects, Uid},
-};
+}, models::pure::tcp::{action::RecvResult, state::SendResult}};
 
 pub struct Server {
     pub address: String,
@@ -38,15 +38,13 @@ impl Server {
 }
 
 pub struct SendRequest {
-    pub server_uid: Uid,
     pub connection_uid: Uid,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_completion: CompletionRoutine<(Uid, SendResult)>,
 }
 
 pub struct RecvRequest {
-    pub server_uid: Uid,
     pub connection_uid: Uid,
-    pub on_completion: CompletionRoutine<(Uid, Result<Vec<u8>, String>)>,
+    pub on_completion: CompletionRoutine<(Uid, RecvResult)>,
 }
 
 pub struct PollRequest {
@@ -84,16 +82,13 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_completion: CompletionRoutine<(Uid, SendResult)>,
     ) {
-        let (&server_uid, _) = self.get_connection_server(&connection_uid);
-
         if self
             .send_requests
             .insert(
                 *uid,
                 SendRequest {
-                    server_uid,
                     connection_uid,
                     on_completion,
                 },
@@ -114,16 +109,13 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Result<Vec<u8>, String>)>,
+        on_completion: CompletionRoutine<(Uid, RecvResult)>,
     ) {
-        let (&server_uid, _) = self.get_connection_server(&connection_uid);
-
         if self
             .recv_requests
             .insert(
                 *uid,
                 RecvRequest {
-                    server_uid,
                     connection_uid,
                     on_completion,
                 },
@@ -146,12 +138,12 @@ impl TcpServerState {
             .insert(connection_uid);
     }
 
-    pub fn get_connection_server(&self, connection_uid: &Uid) -> (&Uid, &Server) {
-        self.server_objects
-            .iter()
-            .find(|(_, server)| server.connections.contains(connection_uid))
-            .expect("Server not found for connection")
-    }
+    // pub fn get_connection_server(&self, connection_uid: &Uid) -> (&Uid, &Server) {
+    //     self.server_objects
+    //         .iter()
+    //         .find(|(_, server)| server.connections.contains(connection_uid))
+    //         .expect("Server not found for connection")
+    // }
 
     pub fn get_connection_server_mut(&mut self, connection_uid: &Uid) -> (&Uid, &mut Server) {
         self.server_objects

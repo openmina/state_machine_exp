@@ -41,7 +41,7 @@ pub enum PollEventsResult {
     Error(String),
 }
 
-pub enum MioAction {
+pub enum MioOutputAction {
     PollCreate {
         uid: Uid,
         on_completion: CompletionRoutine<(Uid, bool)>,
@@ -83,6 +83,15 @@ pub enum MioAction {
         listener_uid: Uid, // created by TcpListen
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
+    TcpConnect {
+        uid: Uid,
+        address: String,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    },
+    TcpClose {
+        connection_uid: Uid,
+        on_completion: CompletionRoutine<Uid>,
+    },
     TcpWrite {
         uid: Uid, // request uid (passed to the completion routine)
         connection_uid: Uid,
@@ -98,8 +107,12 @@ pub enum MioAction {
         len: usize, // max number of bytes to read
         on_completion: CompletionRoutine<(Uid, TcpReadResult)>,
     },
+    TcpGetPeerAddress {
+        connection_uid: Uid,
+        on_completion: CompletionRoutine<(Uid, Result<String, String>)>,
+    },
 }
 
-impl Action for MioAction {
+impl Action for MioOutputAction {
     const KIND: ActionKind = ActionKind::Output;
 }

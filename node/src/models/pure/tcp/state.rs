@@ -1,4 +1,4 @@
-use core::panic;
+use core::{panic, time};
 use std::rc::Rc;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     models::effectful::mio::action::MioEvent,
 };
 
-use super::action::{ConnectionEvent, Event, InitResult, ListenerEvent, PollResult, RecvResult};
+use super::action::{ConnectResult, ConnectionEvent, Event, ListenerEvent, PollResult, RecvResult};
 
 #[derive(Debug)]
 pub struct Listener {
@@ -98,19 +98,37 @@ pub enum ConnectionType {
 }
 
 #[derive(Debug)]
+pub enum ConnectionStatus {
+    Pending,
+    PendingCheck,
+    Established,
+    CloseRequest(Option<CompletionRoutine<Uid>>),
+}
+
+#[derive(Debug)]
 pub struct Connection {
+    pub status: ConnectionStatus,
     pub conn_type: ConnectionType,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub timeout: Option<u128>,
+    pub on_completion: CompletionRoutine<(Uid, ConnectResult)>,
     pub events: Option<ConnectionEvent>,
 }
 
 impl Connection {
     pub fn new(
         conn_type: ConnectionType,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u128>,
+        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
     ) -> Self {
+        let status = match conn_type {
+            ConnectionType::Outgoing => ConnectionStatus::Pending,
+            ConnectionType::Incoming(..) => ConnectionStatus::Established,
+        };
+
         Self {
+            status,
             conn_type,
+            timeout,
             on_completion,
             events: None,
         }
@@ -135,10 +153,29 @@ impl Connection {
         if let Some(curr_event) = &mut self.events {
             match curr_event {
                 ConnectionEvent::Closed | ConnectionEvent::Error => (), // TODO: log message saying we keep this event
-                ConnectionEvent::Ready { .. } => *curr_event = new_event,
+                ConnectionEvent::Ready {
+                    recv: curr_recv,
+                    send: curr_send,
+                } => {
+                    if let ConnectionEvent::Ready { recv, send } = new_event {
+                        *curr_recv |= recv;
+                        *curr_send |= send;
+                    } else {
+                        *curr_event = new_event
+                    }
+                }
             }
         } else {
             self.events = Some(new_event);
+        }
+
+        // MIO's connect implementation is non-blocking, so we must check if the
+        // connection was established correctly after we receive a `writable` event.
+        if matches!(self.conn_type, ConnectionType::Outgoing)
+            && matches!(self.status, ConnectionStatus::Pending)
+            && matches!(self.events, Some(ConnectionEvent::Ready { send: true, .. }))
+        {
+            self.status = ConnectionStatus::PendingCheck;
         }
     }
 
@@ -159,13 +196,20 @@ impl Connection {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum SendResult {
+    Success,
+    Timeout,
+    Error(String),
+}
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection_uid: Uid,
     pub data: Rc<[u8]>,
     pub bytes_sent: usize,
     pub send_on_poll: bool,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub timeout: Option<u128>,
+    pub on_completion: CompletionRoutine<(Uid, SendResult)>,
 }
 
 impl SendRequest {
@@ -173,13 +217,15 @@ impl SendRequest {
         connection_uid: Uid,
         data: Rc<[u8]>,
         send_on_poll: bool,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u128>,
+        on_completion: CompletionRoutine<(Uid, SendResult)>,
     ) -> Self {
         Self {
             connection_uid,
             data,
             bytes_sent: 0,
             send_on_poll,
+            timeout,
             on_completion,
         }
     }
@@ -191,6 +237,7 @@ pub struct RecvRequest {
     pub data: Vec<u8>,
     pub bytes_received: usize,
     pub recv_on_poll: bool,
+    pub timeout: Option<u128>,
     pub on_completion: CompletionRoutine<(Uid, RecvResult)>,
 }
 
@@ -199,6 +246,7 @@ impl RecvRequest {
         connection_uid: Uid,
         count: usize,
         recv_on_poll: bool,
+        timeout: Option<u128>,
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
     ) -> Self {
         Self {
@@ -206,6 +254,7 @@ impl RecvRequest {
             data: vec![0; count],
             bytes_received: 0,
             recv_on_poll,
+            timeout,
             on_completion,
         }
     }
@@ -220,13 +269,13 @@ pub enum Status {
     InitPollCreate {
         init_uid: Uid,
         poll_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, InitResult)>,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     InitEventsCreate {
         init_uid: Uid,
         poll_uid: Uid,
         events_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, InitResult)>,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Ready {
         init_uid: Uid,
@@ -300,11 +349,12 @@ impl TcpState {
         &mut self,
         uid: Uid,
         conn_type: ConnectionType,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u128>,
+        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
     ) {
         if self
             .connection_objects
-            .insert(uid, Connection::new(conn_type, on_completion))
+            .insert(uid, Connection::new(conn_type, timeout, on_completion))
             .is_some()
         {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -317,13 +367,14 @@ impl TcpState {
         connection_uid: Uid,
         data: Rc<[u8]>,
         send_on_poll: bool,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u128>,
+        on_completion: CompletionRoutine<(Uid, SendResult)>,
     ) {
         if self
             .send_request_objects
             .insert(
                 uid,
-                SendRequest::new(connection_uid, data, send_on_poll, on_completion),
+                SendRequest::new(connection_uid, data, send_on_poll, timeout, on_completion),
             )
             .is_some()
         {
@@ -337,13 +388,14 @@ impl TcpState {
         connection_uid: Uid,
         count: usize,
         recv_on_poll: bool,
+        timeout: Option<u128>,
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
     ) {
         if self
             .recv_request_objects
             .insert(
                 uid,
-                RecvRequest::new(connection_uid, count, recv_on_poll, on_completion),
+                RecvRequest::new(connection_uid, count, recv_on_poll, timeout, on_completion),
             )
             .is_some()
         {
@@ -456,6 +508,26 @@ impl TcpState {
                 uid
             )
         });
+    }
+
+    pub fn pending_connections(&self) -> Vec<(&Uid, &Connection)> {
+        self.connection_objects
+            .iter()
+            .filter(|(_, conn)| match conn.status {
+                ConnectionStatus::Pending | ConnectionStatus::PendingCheck => true,
+                _ => false,
+            })
+            .collect()
+    }
+
+    pub fn pending_connections_mut(&mut self) -> Vec<(&Uid, &mut Connection)> {
+        self.connection_objects
+            .iter_mut()
+            .filter(|(_, conn)| match conn.status {
+                ConnectionStatus::Pending | ConnectionStatus::PendingCheck => true,
+                _ => false,
+            })
+            .collect()
     }
 
     pub fn get_events(&self, uid: &Uid) -> Option<(Uid, Event)> {

@@ -2,7 +2,6 @@ use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
-use std::rc::Rc;
 use std::time::Duration;
 
 use crate::automaton::state::{Objects, Uid};
@@ -23,6 +22,15 @@ pub struct MioState {
 }
 
 impl MioState {
+    pub fn new() -> Self {
+        Self {
+            poll_objects: RefCell::new(Objects::<Poll>::new()),
+            events_objects: RefCell::new(Objects::<Events>::new()),
+            tcp_listener_objects: RefCell::new(Objects::<TcpListener>::new()),
+            tcp_connection_objects: RefCell::new(Objects::<TcpConnection>::new()),
+        }
+    }
+
     fn new_poll(&mut self, uid: Uid, obj: Poll) {
         if self.poll_objects.borrow_mut().insert(uid, obj).is_some() {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -196,6 +204,30 @@ impl MioState {
         }
     }
 
+    pub fn tcp_connect(&mut self, uid: Uid, address: String) -> Result<(), String> {
+        match address.parse() {
+            Ok(address) => match TcpStream::connect(address) {
+                Ok(stream) => {
+                    self.new_tcp_connection(uid, TcpConnection { stream, address });
+                    Ok(())
+                }
+                Err(error) => Err(error.to_string()),
+            },
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    pub fn tcp_close(&mut self, connection_uid: &Uid) {
+        let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
+
+        let Some(TcpConnection { stream, .. }) = tcp_connection_objects.remove(connection_uid)
+        else {
+            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+        };
+
+        drop(stream); // not necessary, just to make the intention of closing the stream explicit
+    }
+
     pub fn tcp_write(&mut self, connection_uid: &Uid, data: &[u8]) -> TcpWriteResult {
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
 
@@ -238,6 +270,19 @@ impl MioState {
                 TcpReadResult::ReadPartial(recv_buf)
             }
             Ok(_) => TcpReadResult::ReadAll(recv_buf),
+        }
+    }
+
+    pub fn tcp_peer_address(&mut self, connection_uid: &Uid) -> Result<String, String> {
+        let mut tcp_connection_objects = self.tcp_connection_objects.borrow();
+
+        let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get(connection_uid) else {
+            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+        };
+
+        match stream.peer_addr() {
+            Ok(addr) => Ok(addr.to_string()),
+            Err(err) => Err(err.to_string()),
         }
     }
 }

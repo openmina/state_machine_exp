@@ -1,17 +1,17 @@
-use super::action::MioAction;
+use super::action::MioOutputAction;
 use super::state::MioState;
 use crate::automaton::action::Dispatcher;
 use crate::automaton::model::OutputModel;
 
 impl OutputModel for MioState {
-    type Action = MioAction;
+    type Action = MioOutputAction;
 
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            MioAction::PollCreate { uid, on_completion } => {
+            MioOutputAction::PollCreate { uid, on_completion } => {
                 dispatcher.completion_dispatch(&on_completion, (uid, self.poll_create(uid)));
             }
-            MioAction::PollRegisterTcpServer {
+            MioOutputAction::PollRegisterTcpServer {
                 poll_uid,
                 tcp_listener_uid,
                 on_completion,
@@ -24,7 +24,7 @@ impl OutputModel for MioState {
                     ),
                 );
             }
-            MioAction::PollRegisterTcpConnection {
+            MioOutputAction::PollRegisterTcpConnection {
                 poll_uid,
                 connection_uid,
                 on_completion,
@@ -37,7 +37,7 @@ impl OutputModel for MioState {
                     ),
                 );
             }
-            MioAction::PollDeregisterTcpConnection {
+            MioOutputAction::PollDeregisterTcpConnection {
                 poll_uid,
                 connection_uid,
                 on_completion,
@@ -50,7 +50,7 @@ impl OutputModel for MioState {
                     ),
                 );
             }
-            MioAction::PollEvents {
+            MioOutputAction::PollEvents {
                 uid,
                 poll_uid,
                 events_uid,
@@ -62,7 +62,7 @@ impl OutputModel for MioState {
                     (uid, self.poll_events(&poll_uid, &events_uid, timeout)),
                 );
             }
-            MioAction::EventsCreate {
+            MioOutputAction::EventsCreate {
                 uid,
                 capacity,
                 on_completion,
@@ -70,7 +70,7 @@ impl OutputModel for MioState {
                 self.events_create(uid, capacity);
                 dispatcher.completion_dispatch(&on_completion, uid);
             }
-            MioAction::TcpListen {
+            MioOutputAction::TcpListen {
                 uid,
                 address,
                 on_completion,
@@ -78,7 +78,7 @@ impl OutputModel for MioState {
                 dispatcher
                     .completion_dispatch(&on_completion, (uid, self.tcp_listen(uid, address)));
             }
-            MioAction::TcpAccept {
+            MioOutputAction::TcpAccept {
                 uid,
                 listener_uid,
                 on_completion,
@@ -88,7 +88,22 @@ impl OutputModel for MioState {
                     (uid, self.tcp_accept(uid, &listener_uid)),
                 );
             }
-            MioAction::TcpWrite {
+            MioOutputAction::TcpConnect {
+                uid,
+                address,
+                on_completion,
+            } => {
+                dispatcher
+                    .completion_dispatch(&on_completion, (uid, self.tcp_connect(uid, address)));
+            }
+            MioOutputAction::TcpClose {
+                connection_uid,
+                on_completion,
+            } => {
+                self.tcp_close(&connection_uid);
+                dispatcher.completion_dispatch(&on_completion, connection_uid);
+            }
+            MioOutputAction::TcpWrite {
                 uid,
                 connection_uid,
                 data,
@@ -99,7 +114,7 @@ impl OutputModel for MioState {
                     (uid, self.tcp_write(&connection_uid, &data)),
                 );
             }
-            MioAction::TcpRead {
+            MioOutputAction::TcpRead {
                 uid,
                 connection_uid,
                 len,
@@ -108,6 +123,15 @@ impl OutputModel for MioState {
                 dispatcher.completion_dispatch(
                     &on_completion,
                     (uid, self.tcp_read(&connection_uid, len)),
+                );
+            }
+            MioOutputAction::TcpGetPeerAddress {
+                connection_uid,
+                on_completion,
+            } => {
+                dispatcher.completion_dispatch(
+                    &on_completion,
+                    (connection_uid, self.tcp_peer_address(&connection_uid)),
                 );
             }
         }

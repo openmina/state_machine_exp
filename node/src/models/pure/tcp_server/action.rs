@@ -5,10 +5,13 @@ use crate::{
         action::{Action, ActionKind, CompletionRoutine},
         state::Uid,
     },
-    models::pure::tcp::action::{PollResult, RecvResult},
+    models::pure::tcp::{
+        action::{PollResult, RecvResult, ConnectResult},
+        state::SendResult,
+    },
 };
 
-pub enum TcpServerAction {
+pub enum TcpServerPureAction {
     New {
         uid: Uid,
         address: String,
@@ -22,25 +25,30 @@ pub enum TcpServerAction {
         timeout: Option<u64>,
         on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
+    Close {
+        connection_uid: Uid,
+    },
     Send {
         uid: Uid,
         connection_uid: Uid,
         data: Rc<[u8]>,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u64>,
+        on_completion: CompletionRoutine<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
         count: usize, // number of bytes to read
+        timeout: Option<u64>,
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
     },
 }
 
-impl Action for TcpServerAction {
+impl Action for TcpServerPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
-pub enum TcpServerCallbackAction {
+pub enum TcpServerInputAction {
     New {
         uid: Uid,
         result: Result<(), String>,
@@ -51,18 +59,21 @@ pub enum TcpServerCallbackAction {
     },
     Accept {
         uid: Uid,
-        result: Result<(), String>,
+        result: ConnectResult,
+    },
+    Close {
+        uid: Uid,
     },
     Send {
         uid: Uid,
-        result: Result<(), String>,
+        result: SendResult,
     },
     Recv {
         uid: Uid,
-        result: Result<Vec<u8>, String>,
+        result: RecvResult,
     },
 }
 
-impl Action for TcpServerCallbackAction {
+impl Action for TcpServerInputAction {
     const KIND: ActionKind = ActionKind::Input;
 }

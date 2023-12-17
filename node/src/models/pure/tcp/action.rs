@@ -8,11 +8,7 @@ use crate::{
     models::effectful::mio::action::{PollEventsResult, TcpReadResult, TcpWriteResult},
 };
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum InitResult {
-    Success,
-    Error(String),
-}
+use super::state::SendResult;
 
 #[derive(Clone, Debug)]
 pub enum ListenerEvent {
@@ -36,12 +32,25 @@ pub enum Event {
 }
 
 pub type PollResult = Result<Vec<(Uid, Event)>, String>;
-pub type RecvResult = Result<Vec<u8>, String>;
 
-pub enum TcpAction {
+#[derive(Clone, Debug)]
+pub enum RecvResult {
+    Success(Vec<u8>),
+    Timeout(Vec<u8>),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum ConnectResult {
+    Success,
+    Timeout,
+    Error(String),
+}
+
+pub enum TcpPureAction {
     Init {
         init_uid: Uid, // TCP model instance
-        on_completion: CompletionRoutine<(Uid, InitResult)>,
+        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Listen {
         uid: Uid,
@@ -51,7 +60,17 @@ pub enum TcpAction {
     Accept {
         uid: Uid,
         listener_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+    },
+    Connect {
+        uid: Uid,
+        address: String,
+        timeout: Option<u64>, // timeout in milliseconds
+        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+    },
+    Close {
+        connection_uid: Uid,
+        on_completion: CompletionRoutine<Uid>,
     },
     Poll {
         uid: Uid,
@@ -63,21 +82,23 @@ pub enum TcpAction {
         uid: Uid,
         connection_uid: Uid,
         data: Rc<[u8]>,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        timeout: Option<u64>, // timeout in milliseconds
+        on_completion: CompletionRoutine<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
-        count: usize, // number of bytes to read
+        count: usize,         // number of bytes to read
+        timeout: Option<u64>, // timeout in milliseconds
         on_completion: CompletionRoutine<(Uid, RecvResult)>,
     },
 }
 
-impl Action for TcpAction {
+impl Action for TcpPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
-pub enum TcpCallbackAction {
+pub enum TcpInputAction {
     PollCreate {
         uid: Uid,
         success: bool,
@@ -91,13 +112,24 @@ pub enum TcpCallbackAction {
         uid: Uid,
         result: Result<(), String>,
     },
+    Connect {
+        uid: Uid,
+        result: Result<(), String>,
+    },
+    CloseConnection {
+        uid: Uid,
+    },
     RegisterConnection {
         uid: Uid,
-        result: bool
+        result: bool,
+    },
+    DeregisterConnection {
+        uid: Uid,
+        result: bool,
     },
     RegisterListener {
         uid: Uid,
-        result: bool
+        result: bool,
     },
     Poll {
         uid: Uid,
@@ -111,8 +143,12 @@ pub enum TcpCallbackAction {
         uid: Uid,
         result: TcpReadResult,
     },
+    PeerAddress {
+        uid: Uid,
+        result: Result<String, String>
+    }
 }
 
-impl Action for TcpCallbackAction {
+impl Action for TcpInputAction {
     const KIND: ActionKind = ActionKind::Input;
 }
