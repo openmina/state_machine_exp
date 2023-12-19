@@ -47,6 +47,7 @@ pub enum ConnectResult {
     Error(String),
 }
 
+#[derive(Debug)]
 pub enum TcpPureAction {
     Init {
         init_uid: Uid, // TCP model instance
@@ -98,6 +99,7 @@ impl Action for TcpPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
+#[derive(Debug)]
 pub enum TcpInputAction {
     PollCreate {
         uid: Uid,

@@ -5,6 +5,7 @@ use crate::automaton::{
     state::Uid,
 };
 
+#[derive(Debug)]
 pub enum TimeOutputAction {
     GetSystemTime {
         uid: Uid,

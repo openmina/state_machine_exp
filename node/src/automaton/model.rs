@@ -1,5 +1,8 @@
 use std::any::Any;
 
+use colored::Colorize;
+use log::debug;
+
 use super::{
     action::{AnyAction, Dispatcher},
     state::{ModelState, State},
@@ -70,7 +73,6 @@ where
         AnyModel { model, vtable }
     }
 
-
     fn process_pure<Substates: ModelState>(
         _state: &mut State<Substates>,
         _action: AnyAction,
@@ -96,7 +98,7 @@ pub trait PureModel
 where
     Self: Sized + 'static,
 {
-    type Action: Sized + 'static;
+    type Action: std::fmt::Debug + Sized + 'static;
 
     fn process_pure<Substates: ModelState>(
         state: &mut State<Substates>,
@@ -113,10 +115,17 @@ impl<T: PureModel> PrivateModel for Pure<T> {
         action: AnyAction,
         dispatcher: &mut Dispatcher,
     ) {
-        let Ok(action) = action.ptr.downcast::<T::Action>() else {
+        let Ok(unboxed_action) = action.ptr.downcast::<T::Action>() else {
             panic!("action not found")
         };
-        T::process_pure(state, *action, dispatcher)
+        debug!(
+            "{}{}::{:?}",
+            " ".repeat(dispatcher.depth),
+            action.type_name.bright_blue(),
+            unboxed_action
+        );
+        dispatcher.depth += 1;
+        T::process_pure(state, *unboxed_action, dispatcher)
     }
 }
 
@@ -124,7 +133,7 @@ pub trait InputModel
 where
     Self: Sized + 'static,
 {
-    type Action: Sized + 'static;
+    type Action: std::fmt::Debug + Sized + 'static;
 
     fn process_input<Substates: ModelState>(
         state: &mut State<Substates>,
@@ -141,12 +150,20 @@ impl<T: InputModel> PrivateModel for Input<T> {
         action: AnyAction,
         dispatcher: &mut Dispatcher,
     ) {
-        let Ok(action) = action.ptr.downcast::<T::Action>() else {
+        let Ok(unboxed_action) = action.ptr.downcast::<T::Action>() else {
             panic!("action not found")
         };
 
+        dispatcher.depth = dispatcher.depth.saturating_sub(1);
+        debug!(
+            "{}{}::{:?}",
+            " ".repeat(dispatcher.depth),
+            action.type_name.cyan(),
+            unboxed_action
+        );
+
         // TODO: add record logic
-        T::process_input(state, *action, dispatcher)
+        T::process_input(state, *unboxed_action, dispatcher)
     }
 }
 
@@ -154,7 +171,7 @@ pub trait OutputModel
 where
     Self: Sized + 'static,
 {
-    type Action: Sized + 'static;
+    type Action: std::fmt::Debug + Sized + 'static;
 
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher);
 }
@@ -167,10 +184,18 @@ impl<T: OutputModel> PrivateModel for Output<T> {
             panic!("model's state not found");
         };
 
-        let Ok(action) = action.ptr.downcast::<T::Action>() else {
+        let Ok(unboxed_action) = action.ptr.downcast::<T::Action>() else {
             panic!("action not found")
         };
 
-        state.0.process_output(*action, dispatcher)
+        debug!(
+            "{}{}::{:?}",
+            " ".repeat(dispatcher.depth),
+            action.type_name.bright_green(),
+            unboxed_action
+        );
+        dispatcher.depth += 1;
+
+        state.0.process_output(*unboxed_action, dispatcher)
     }
 }

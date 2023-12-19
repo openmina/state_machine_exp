@@ -1,8 +1,12 @@
-use crate::automaton::{
-    action::{Action, ActionKind},
-    state::Uid,
+use crate::{
+    automaton::{
+        action::{Action, ActionKind},
+        state::Uid,
+    },
+    models::pure::tcp::{action::RecvResult, state::SendResult},
 };
 
+#[derive(Debug)]
 pub enum EchoServerPureAction {
     Tick,
 }
@@ -11,6 +15,7 @@ impl Action for EchoServerPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
+#[derive(Debug)]
 pub enum EchoServerInputAction {
     Init {
         uid: Uid,
@@ -21,16 +26,22 @@ pub enum EchoServerInputAction {
         result: Result<(), String>,
     },
     NewConnection {
-        server_uid: Uid,
         connection_uid: Uid,
     },
     Closed {
-        server_uid: Uid,
         connection_uid: Uid,
     },
     Poll {
         uid: Uid,
         result: Result<(), String>,
+    },
+    Recv {
+        uid: Uid,
+        result: RecvResult,
+    },
+    Send {
+        uid: Uid,
+        result: SendResult,
     },
 }
 

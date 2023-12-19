@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub enum TcpServerPureAction {
     New {
         uid: Uid,
@@ -48,6 +49,7 @@ impl Action for TcpServerPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
+#[derive(Debug)]
 pub enum TcpServerInputAction {
     New {
         uid: Uid,

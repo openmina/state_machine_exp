@@ -5,7 +5,7 @@ use crate::automaton::{
     state::Uid,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TcpWriteResult {
     WrittenAll,
     WrittenPartial(usize),
@@ -13,7 +13,7 @@ pub enum TcpWriteResult {
     Error(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TcpReadResult {
     ReadAll(Vec<u8>),
     ReadPartial(Vec<u8>),
@@ -21,7 +21,7 @@ pub enum TcpReadResult {
     Error(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MioEvent {
     pub token: Uid,
     pub readable: bool,
@@ -34,13 +34,14 @@ pub struct MioEvent {
     pub lio: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PollEventsResult {
     Events(Vec<MioEvent>),
     Interrupted,
     Error(String),
 }
 
+#[derive(Debug)]
 pub enum MioOutputAction {
     PollCreate {
         uid: Uid,

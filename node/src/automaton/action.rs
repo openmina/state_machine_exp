@@ -1,7 +1,10 @@
 use std::{
     any::{Any, TypeId},
-    collections::VecDeque,
+    collections::VecDeque, fmt,
 };
+
+use colored::Colorize;
+use log::debug;
 
 // Actions can fall into 3 categories:
 //
@@ -51,6 +54,7 @@ where
     const KIND: ActionKind;
 }
 
+#[derive(Debug)]
 pub struct AnyAction {
     pub id: TypeId,
     pub ptr: Box<dyn Any>,
@@ -72,7 +76,7 @@ impl AnyAction {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone)]
 pub struct CompletionRoutine<R: Clone>(fn(R) -> AnyAction);
 
 impl<R: Clone> CompletionRoutine<R> {
@@ -85,9 +89,16 @@ impl<R: Clone> CompletionRoutine<R> {
     }
 }
 
+impl<R: Clone> fmt::Debug for CompletionRoutine<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "...")
+    }
+}
+
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
     tick: fn() -> AnyAction,
+    pub depth: usize // for debug logs
 }
 
 impl Dispatcher {
@@ -95,11 +106,17 @@ impl Dispatcher {
         Self {
             queue: VecDeque::with_capacity(1024),
             tick,
+            depth: 0
         }
     }
 
     pub fn next_action(&mut self) -> AnyAction {
-        self.queue.pop_front().unwrap_or((self.tick)())
+        self.queue.pop_front().unwrap_or_else(|| {
+            debug!("|DISPATCHER| {}", "TICK callback".yellow());
+            self.depth = 0;
+            (self.tick)()
+        }
+        )
     }
 
     pub fn dispatch<A: Action>(&mut self, action: A)

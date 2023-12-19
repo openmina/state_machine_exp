@@ -1,3 +1,6 @@
+use log::LevelFilter;
+use std::io::Write;
+
 use std::{any::TypeId, collections::BTreeMap};
 
 use super::{
@@ -73,9 +76,13 @@ impl<Substate: ModelState> Runner<Substate> {
     }
 
     pub fn run(&mut self, mut dispatcher: Dispatcher) {
+        env_logger::Builder::new()
+            .format(|buf, record| writeln!(buf, "[{}] {}", record.level(), record.args()))
+            .filter(None, LevelFilter::Debug)
+            .init();
+
         loop {
             let action = dispatcher.next_action();
-
             self.process_action(action, &mut dispatcher)
         }
     }
