@@ -6,7 +6,7 @@ use crate::{
         state::Uid,
     },
     models::pure::tcp::{
-        action::{PollResult, RecvResult, ConnectResult},
+        action::{ConnectResult, PollResult, RecvResult},
         state::SendResult,
     },
 };
@@ -19,12 +19,12 @@ pub enum TcpServerPureAction {
         max_connections: usize,
         on_new_connection: CompletionRoutine<(Uid, Uid)>, // (server_uid, new_connection_uid)
         on_close_connection: CompletionRoutine<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Poll {
         uid: Uid,
         timeout: Option<u64>,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Close {
         connection_uid: Uid,
@@ -34,14 +34,14 @@ pub enum TcpServerPureAction {
         connection_uid: Uid,
         data: Rc<[u8]>,
         timeout: Option<u64>,
-        on_completion: CompletionRoutine<(Uid, SendResult)>,
+        on_result: CompletionRoutine<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
         count: usize, // number of bytes to read
         timeout: Option<u64>,
-        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: CompletionRoutine<(Uid, RecvResult)>,
     },
 }
 

@@ -51,47 +51,47 @@ pub enum ConnectResult {
 pub enum TcpPureAction {
     Init {
         init_uid: Uid, // TCP model instance
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Listen {
         uid: Uid,
         address: String,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Accept {
         uid: Uid,
         listener_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: CompletionRoutine<(Uid, ConnectResult)>,
     },
     Connect {
         uid: Uid,
         address: String,
         timeout: Option<u64>, // timeout in milliseconds
-        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: CompletionRoutine<(Uid, ConnectResult)>,
     },
     Close {
         connection_uid: Uid,
-        on_completion: CompletionRoutine<Uid>,
+        on_result: CompletionRoutine<Uid>,
     },
     Poll {
         uid: Uid,
         objects: Vec<Uid>,    // TCP objects we are intereted in
         timeout: Option<u64>, // timeout in milliseconds
-        on_completion: CompletionRoutine<(Uid, PollResult)>,
+        on_result: CompletionRoutine<(Uid, PollResult)>,
     },
     Send {
         uid: Uid,
         connection_uid: Uid,
         data: Rc<[u8]>,
         timeout: Option<u64>, // timeout in milliseconds
-        on_completion: CompletionRoutine<(Uid, SendResult)>,
+        on_result: CompletionRoutine<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
         count: usize,         // number of bytes to read
         timeout: Option<u64>, // timeout in milliseconds
-        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: CompletionRoutine<(Uid, RecvResult)>,
     },
 }
 
@@ -147,8 +147,8 @@ pub enum TcpInputAction {
     },
     PeerAddress {
         uid: Uid,
-        result: Result<String, String>
-    }
+        result: Result<String, String>,
+    },
 }
 
 impl Action for TcpInputAction {

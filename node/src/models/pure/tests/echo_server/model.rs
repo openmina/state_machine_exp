@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{AnyAction, CompletionRoutine, Dispatcher},
+        action::{CompletionRoutine, Dispatcher},
         model::{InputModel, PureModel},
         state::{ModelState, State, Uid},
     },
@@ -35,8 +35,8 @@ fn dispatch_recv_to_connections<Substate: ModelState>(
             connection_uid,
             count: 1024,
             timeout: Some(1000),
-            on_completion: CompletionRoutine::new(|(uid, result)| {
-                AnyAction::from(EchoServerInputAction::Recv { uid, result })
+            on_result: CompletionRoutine::new(|(uid, result)| {
+                (EchoServerInputAction::Recv { uid, result }).into()
             }),
         });
 
@@ -67,8 +67,8 @@ fn echo_received_data_to_client(
                     connection_uid,
                     data: data.into(),
                     timeout: Some(1024),
-                    on_completion: CompletionRoutine::new(|(uid, result)| {
-                        AnyAction::from(EchoServerInputAction::Send { uid, result })
+                    on_result: CompletionRoutine::new(|(uid, result)| {
+                        (EchoServerInputAction::Send { uid, result }).into()
                     }),
                 });
 
@@ -178,8 +178,8 @@ impl PureModel for EchoServerState {
             // Init TCP model
             ServerStatus::Uninitialized => dispatcher.dispatch(TcpPureAction::Init {
                 init_uid: state.new_uid(),
-                on_completion: CompletionRoutine::new(|(uid, result)| {
-                    AnyAction::from(EchoServerInputAction::Init { uid, result })
+                on_result: CompletionRoutine::new(|(uid, result)| {
+                    (EchoServerInputAction::Init { uid, result }).into()
                 }),
             }),
             // Init TCP-server model
@@ -188,21 +188,21 @@ impl PureModel for EchoServerState {
                 address: "127.0.0.1:8888".to_string(),
                 max_connections: 2,
                 on_new_connection: CompletionRoutine::new(|(_server_uid, connection_uid)| {
-                    AnyAction::from(EchoServerInputAction::NewConnection { connection_uid })
+                    (EchoServerInputAction::NewConnection { connection_uid }).into()
                 }),
                 on_close_connection: CompletionRoutine::new(|(_server_uid, connection_uid)| {
-                    AnyAction::from(EchoServerInputAction::Closed { connection_uid })
+                    (EchoServerInputAction::Closed { connection_uid }).into()
                 }),
-                on_completion: CompletionRoutine::new(|(uid, result)| {
-                    AnyAction::from(EchoServerInputAction::InitCompleted { uid, result })
+                on_result: CompletionRoutine::new(|(uid, result)| {
+                    (EchoServerInputAction::InitCompleted { uid, result }).into()
                 }),
             }),
             // Poll events
             ServerStatus::Ready => dispatcher.dispatch(TcpServerPureAction::Poll {
                 uid: state.new_uid(),
                 timeout: Some(250),
-                on_completion: CompletionRoutine::new(|(uid, result)| {
-                    AnyAction::from(EchoServerInputAction::Poll { uid, result })
+                on_result: CompletionRoutine::new(|(uid, result)| {
+                    (EchoServerInputAction::Poll { uid, result }).into()
                 }),
             }),
         }

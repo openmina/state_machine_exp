@@ -9,7 +9,7 @@ use crate::automaton::{
 pub enum TimeOutputAction {
     GetSystemTime {
         uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Duration)>,
+        on_result: CompletionRoutine<(Uid, Duration)>,
     },
 }
 

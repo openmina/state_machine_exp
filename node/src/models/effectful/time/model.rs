@@ -9,12 +9,12 @@ impl OutputModel for TimeState {
 
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            TimeOutputAction::GetSystemTime { uid, on_completion } => {
+            TimeOutputAction::GetSystemTime { uid, on_result } => {
                 let since_epoch = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("System clock set before UNIX_EPOCH");
 
-                dispatcher.completion_dispatch(&on_completion, (uid, since_epoch));
+                dispatcher.completion_dispatch(&on_result, (uid, since_epoch));
             }
         }
     }

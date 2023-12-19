@@ -2,7 +2,7 @@ use std::any::Any;
 
 use crate::{
     automaton::{
-        action::{AnyAction, Dispatcher},
+        action::Dispatcher,
         model::Output,
         runner::RunnerBuilder,
         state::{ModelState, State},
@@ -72,7 +72,7 @@ fn echo_server() {
         .model_pure_and_input::<EchoServerState>()
         .state(State::<Substates>::from_substates(Substates::new()))
         .build();
-    let dispatcher = Dispatcher::new(|| AnyAction::from(EchoServerPureAction::Tick));
+    let dispatcher = Dispatcher::new(|| EchoServerPureAction::Tick.into());
 
     runner.run(dispatcher)
 }

@@ -1,16 +1,19 @@
 use std::{collections::BTreeSet, mem};
 
-use crate::{automaton::{
-    action::CompletionRoutine,
-    state::{Objects, Uid},
-}, models::pure::tcp::{action::RecvResult, state::SendResult}};
+use crate::{
+    automaton::{
+        action::CompletionRoutine,
+        state::{Objects, Uid},
+    },
+    models::pure::tcp::{action::RecvResult, state::SendResult},
+};
 
 pub struct Server {
     pub address: String,
     pub max_connections: usize,
     pub on_new_connection: CompletionRoutine<(Uid, Uid)>,
     pub on_close_connection: CompletionRoutine<(Uid, Uid)>,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     pub connections: BTreeSet<Uid>,
 }
 
@@ -20,14 +23,14 @@ impl Server {
         max_connections: usize,
         on_new_connection: CompletionRoutine<(Uid, Uid)>,
         on_close_connection: CompletionRoutine<(Uid, Uid)>,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
             address,
             max_connections,
             on_new_connection,
             on_close_connection,
-            on_completion,
+            on_result,
             connections: BTreeSet::new(),
         }
     }
@@ -39,17 +42,17 @@ impl Server {
 
 pub struct SendRequest {
     pub connection_uid: Uid,
-    pub on_completion: CompletionRoutine<(Uid, SendResult)>,
+    pub on_result: CompletionRoutine<(Uid, SendResult)>,
 }
 
 pub struct RecvRequest {
     pub connection_uid: Uid,
-    pub on_completion: CompletionRoutine<(Uid, RecvResult)>,
+    pub on_result: CompletionRoutine<(Uid, RecvResult)>,
 }
 
 pub struct PollRequest {
     pub timeout: Option<u64>,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_result: CompletionRoutine<(Uid, Result<(), String>)>,
 }
 
 pub struct TcpServerState {
@@ -82,7 +85,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, SendResult)>,
+        on_result: CompletionRoutine<(Uid, SendResult)>,
     ) {
         if self
             .send_requests
@@ -90,7 +93,7 @@ impl TcpServerState {
                 *uid,
                 SendRequest {
                     connection_uid,
-                    on_completion,
+                    on_result,
                 },
             )
             .is_some()
@@ -109,7 +112,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: CompletionRoutine<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests
@@ -117,7 +120,7 @@ impl TcpServerState {
                 *uid,
                 RecvRequest {
                     connection_uid,
-                    on_completion,
+                    on_result,
                 },
             )
             .is_some()
@@ -159,7 +162,7 @@ impl TcpServerState {
         max_connections: usize,
         on_new_connection: CompletionRoutine<(Uid, Uid)>,
         on_close_connection: CompletionRoutine<(Uid, Uid)>,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     ) {
         if self
             .server_objects
@@ -170,7 +173,7 @@ impl TcpServerState {
                     max_connections,
                     on_new_connection,
                     on_close_connection,
-                    on_completion,
+                    on_result,
                 ),
             )
             .is_some()

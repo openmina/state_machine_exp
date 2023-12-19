@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
-    collections::VecDeque, fmt,
+    collections::VecDeque,
+    fmt,
 };
 
 use colored::Colorize;
@@ -63,8 +64,8 @@ pub struct AnyAction {
     pub type_name: &'static str,
 }
 
-impl AnyAction {
-    pub fn from<T: Action>(v: T) -> Self {
+impl<T: Action> From<T> for AnyAction {
+    fn from(v: T) -> Self {
         // Panic when calling `AnyAction::from(AnyAction { .. })`
         assert_ne!(TypeId::of::<T>(), TypeId::of::<AnyAction>());
         Self {
@@ -98,7 +99,7 @@ impl<R: Clone> fmt::Debug for CompletionRoutine<R> {
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
     tick: fn() -> AnyAction,
-    pub depth: usize // for debug logs
+    pub depth: usize, // for debug logs
 }
 
 impl Dispatcher {
@@ -106,7 +107,7 @@ impl Dispatcher {
         Self {
             queue: VecDeque::with_capacity(1024),
             tick,
-            depth: 0
+            depth: 0,
         }
     }
 
@@ -115,8 +116,7 @@ impl Dispatcher {
             debug!("|DISPATCHER| {}", "TICK callback".yellow());
             self.depth = 0;
             (self.tick)()
-        }
-        )
+        })
     }
 
     pub fn dispatch<A: Action>(&mut self, action: A)
@@ -124,14 +124,14 @@ impl Dispatcher {
         A: Sized + 'static,
     {
         assert_ne!(TypeId::of::<A>(), TypeId::of::<AnyAction>());
-        self.queue.push_back(AnyAction::from(action));
+        self.queue.push_back(action.into());
     }
 
-    pub fn completion_dispatch<R: Clone>(&mut self, on_completion: &CompletionRoutine<R>, result: R)
+    pub fn completion_dispatch<R: Clone>(&mut self, on_result: &CompletionRoutine<R>, result: R)
     where
         R: Sized + 'static,
     {
-        let action = on_completion.make(result);
+        let action = on_result.make(result);
         assert_ne!(action.id, TypeId::of::<AnyAction>());
         assert!(matches!(action.kind, ActionKind::Input));
         self.queue.push_back(action);

@@ -1,4 +1,4 @@
-use core::{panic, time};
+use core::panic;
 use std::rc::Rc;
 
 use crate::{
@@ -14,18 +14,15 @@ use super::action::{ConnectResult, ConnectionEvent, Event, ListenerEvent, PollRe
 #[derive(Debug)]
 pub struct Listener {
     pub address: String,
-    pub on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     pub events: Option<ListenerEvent>,
 }
 
 impl Listener {
-    pub fn new(
-        address: String,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
-    ) -> Self {
+    pub fn new(address: String, on_result: CompletionRoutine<(Uid, Result<(), String>)>) -> Self {
         Self {
             address,
-            on_completion,
+            on_result,
             events: None,
         }
     }
@@ -74,19 +71,19 @@ impl Listener {
 pub struct PollRequest {
     pub objects: Vec<Uid>,
     pub timeout: Option<u64>,
-    pub on_completion: CompletionRoutine<(Uid, PollResult)>,
+    pub on_result: CompletionRoutine<(Uid, PollResult)>,
 }
 
 impl PollRequest {
     pub fn new(
         objects: Vec<Uid>,
         timeout: Option<u64>,
-        on_completion: CompletionRoutine<(Uid, PollResult)>,
+        on_result: CompletionRoutine<(Uid, PollResult)>,
     ) -> Self {
         Self {
             objects,
             timeout,
-            on_completion,
+            on_result,
         }
     }
 }
@@ -110,7 +107,7 @@ pub struct Connection {
     pub status: ConnectionStatus,
     pub conn_type: ConnectionType,
     pub timeout: Option<u128>,
-    pub on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+    pub on_result: CompletionRoutine<(Uid, ConnectResult)>,
     pub events: Option<ConnectionEvent>,
 }
 
@@ -118,7 +115,7 @@ impl Connection {
     pub fn new(
         conn_type: ConnectionType,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: CompletionRoutine<(Uid, ConnectResult)>,
     ) -> Self {
         let status = match conn_type {
             ConnectionType::Outgoing => ConnectionStatus::Pending,
@@ -129,7 +126,7 @@ impl Connection {
             status,
             conn_type,
             timeout,
-            on_completion,
+            on_result,
             events: None,
         }
     }
@@ -209,7 +206,7 @@ pub struct SendRequest {
     pub bytes_sent: usize,
     pub send_on_poll: bool,
     pub timeout: Option<u128>,
-    pub on_completion: CompletionRoutine<(Uid, SendResult)>,
+    pub on_result: CompletionRoutine<(Uid, SendResult)>,
 }
 
 impl SendRequest {
@@ -218,7 +215,7 @@ impl SendRequest {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, SendResult)>,
+        on_result: CompletionRoutine<(Uid, SendResult)>,
     ) -> Self {
         Self {
             connection_uid,
@@ -226,7 +223,7 @@ impl SendRequest {
             bytes_sent: 0,
             send_on_poll,
             timeout,
-            on_completion,
+            on_result,
         }
     }
 }
@@ -238,7 +235,7 @@ pub struct RecvRequest {
     pub bytes_received: usize,
     pub recv_on_poll: bool,
     pub timeout: Option<u128>,
-    pub on_completion: CompletionRoutine<(Uid, RecvResult)>,
+    pub on_result: CompletionRoutine<(Uid, RecvResult)>,
 }
 
 impl RecvRequest {
@@ -247,7 +244,7 @@ impl RecvRequest {
         count: usize,
         recv_on_poll: bool,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: CompletionRoutine<(Uid, RecvResult)>,
     ) -> Self {
         Self {
             connection_uid,
@@ -255,7 +252,7 @@ impl RecvRequest {
             bytes_received: 0,
             recv_on_poll,
             timeout,
-            on_completion,
+            on_result,
         }
     }
 }
@@ -269,13 +266,13 @@ pub enum Status {
     InitPollCreate {
         init_uid: Uid,
         poll_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     InitEventsCreate {
         init_uid: Uid,
         poll_uid: Uid,
         events_uid: Uid,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     },
     Ready {
         init_uid: Uid,
@@ -313,11 +310,11 @@ impl TcpState {
         &mut self,
         uid: Uid,
         address: String,
-        on_completion: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
     ) {
         if self
             .listener_objects
-            .insert(uid, Listener::new(address, on_completion))
+            .insert(uid, Listener::new(address, on_result))
             .is_some()
         {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -329,7 +326,7 @@ impl TcpState {
         uid: Uid,
         objects: Vec<Uid>,
         timeout: Option<u64>,
-        on_completion: CompletionRoutine<(Uid, PollResult)>,
+        on_result: CompletionRoutine<(Uid, PollResult)>,
     ) {
         assert!(objects
             .iter()
@@ -338,7 +335,7 @@ impl TcpState {
 
         if self
             .poll_request_objects
-            .insert(uid, PollRequest::new(objects, timeout, on_completion))
+            .insert(uid, PollRequest::new(objects, timeout, on_result))
             .is_some()
         {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -350,11 +347,11 @@ impl TcpState {
         uid: Uid,
         conn_type: ConnectionType,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: CompletionRoutine<(Uid, ConnectResult)>,
     ) {
         if self
             .connection_objects
-            .insert(uid, Connection::new(conn_type, timeout, on_completion))
+            .insert(uid, Connection::new(conn_type, timeout, on_result))
             .is_some()
         {
             panic!("Attempt to re-use existing uid {:?}", uid)
@@ -368,13 +365,13 @@ impl TcpState {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, SendResult)>,
+        on_result: CompletionRoutine<(Uid, SendResult)>,
     ) {
         if self
             .send_request_objects
             .insert(
                 uid,
-                SendRequest::new(connection_uid, data, send_on_poll, timeout, on_completion),
+                SendRequest::new(connection_uid, data, send_on_poll, timeout, on_result),
             )
             .is_some()
         {
@@ -389,13 +386,13 @@ impl TcpState {
         count: usize,
         recv_on_poll: bool,
         timeout: Option<u128>,
-        on_completion: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: CompletionRoutine<(Uid, RecvResult)>,
     ) {
         if self
             .recv_request_objects
             .insert(
                 uid,
-                RecvRequest::new(connection_uid, count, recv_on_poll, timeout, on_completion),
+                RecvRequest::new(connection_uid, count, recv_on_poll, timeout, on_result),
             )
             .is_some()
         {
