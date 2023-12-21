@@ -1,9 +1,12 @@
+use log::info;
+
 use crate::{
     automaton::{
-        action::{CompletionRoutine, Dispatcher},
+        action::{Dispatcher, ResultDispatch},
         model::{InputModel, PureModel},
         state::{ModelState, State, Uid},
     },
+    dispatch,
     models::pure::{
         tcp::{
             action::{RecvResult, TcpPureAction},
@@ -30,15 +33,20 @@ fn dispatch_recv_to_connections<Substate: ModelState>(
     for connection_uid in server_state.connections_to_recv() {
         let uid = state.new_uid();
 
-        dispatcher.dispatch(TcpServerPureAction::Recv {
-            uid,
-            connection_uid,
-            count: 1024,
-            timeout: Some(1000),
-            on_result: CompletionRoutine::new(|(uid, result)| {
-                (EchoServerInputAction::Recv { uid, result }).into()
-            }),
-        });
+        info!("Dispatch recv {:?} to connection {:?}", uid, connection_uid);
+
+        dispatch!(
+            dispatcher,
+            TcpServerPureAction::Recv {
+                uid,
+                connection_uid,
+                count: 1024,
+                timeout: Some(1000),
+                on_result: ResultDispatch::new(|(uid, result)| {
+                    (EchoServerInputAction::Recv { uid, result }).into()
+                }),
+            }
+        );
 
         let connection = state
             .models
@@ -62,17 +70,19 @@ fn echo_received_data_to_client(
         RecvResult::Success(data) | RecvResult::Timeout(data) => {
             // It is OK to get a timeout as long as it contains partial data (< 1024 bytes)
             if data.len() != 0 {
-                dispatcher.dispatch(TcpServerPureAction::Send {
-                    uid,
-                    connection_uid,
-                    data: data.into(),
-                    timeout: Some(1024),
-                    on_result: CompletionRoutine::new(|(uid, result)| {
-                        (EchoServerInputAction::Send { uid, result }).into()
-                    }),
-                });
+                dispatch!(
+                    dispatcher,
+                    TcpServerPureAction::Send {
+                        uid,
+                        connection_uid,
+                        data: data.into(),
+                        timeout: Some(1024),
+                        on_result: ResultDispatch::new(|(uid, result)| {
+                            (EchoServerInputAction::Send { uid, result }).into()
+                        }),
+                    }
+                );
 
-                connection.recv_uid = None;
                 None
             } else {
                 Some("Timeout".to_string())
@@ -82,8 +92,11 @@ fn echo_received_data_to_client(
     };
 
     if let Some(reason) = fail_reason {
-        // TODO: log reason
-        dispatcher.dispatch(TcpServerPureAction::Close { connection_uid });
+        info!(
+            "Echo server: error receiving data from client {:?}, reason: {:?}",
+            connection_uid, reason
+        );
+        dispatch!(dispatcher, TcpServerPureAction::Close { connection_uid });
     }
 }
 
@@ -94,7 +107,7 @@ fn handle_send_result(
     result: SendResult,
 ) {
     assert!(matches!(server_state.status, ServerStatus::Ready));
-    let (&connection_uid, _) = server_state.find_connection_by_recv_uid(uid);
+    let (&connection_uid, connection) = server_state.find_connection_by_recv_uid(uid);
 
     let fail_reason = match result {
         SendResult::Success => None,
@@ -102,9 +115,14 @@ fn handle_send_result(
         SendResult::Error(error) => Some(error.to_string()),
     };
 
+    connection.recv_uid = None;
+
     if let Some(reason) = fail_reason {
-        // TODO: log reason
-        dispatcher.dispatch(TcpServerPureAction::Close { connection_uid });
+        info!(
+            "Echo server: error sending data to client {:?}, reason: {:?}",
+            connection_uid, reason
+        );
+        dispatch!(dispatcher, TcpServerPureAction::Close { connection_uid });
     }
 }
 
@@ -130,21 +148,28 @@ impl InputModel for EchoServerState {
             EchoServerInputAction::NewConnection { connection_uid } => {
                 let server_state: &mut EchoServerState = state.models.state_mut();
                 assert!(matches!(server_state.status, ServerStatus::Ready));
+
+                info!("New connection {:?}", connection_uid);
                 server_state.new_connection(connection_uid)
             }
             EchoServerInputAction::Closed { connection_uid } => {
                 let server_state: &mut EchoServerState = state.models.state_mut();
                 assert!(matches!(server_state.status, ServerStatus::Ready));
-                server_state.remove_connection(&connection_uid)
+
+                info!("Connection {:?} closed", connection_uid);
+                server_state.remove_connection(&connection_uid);
             }
             EchoServerInputAction::Poll { uid: _, result } => {
                 assert!(result.is_ok());
+                //info!("Poll result {:?}", result);
                 dispatch_recv_to_connections(state, dispatcher)
             }
             EchoServerInputAction::Recv { uid, result } => {
+                info!("Recv {:?} result {:?}", uid, result);
                 echo_received_data_to_client(state.models.state_mut(), dispatcher, uid, result)
             }
             EchoServerInputAction::Send { uid, result } => {
+                info!("Send {:?} result {:?}", uid, result);
                 handle_send_result(state.models.state_mut(), dispatcher, uid, result)
             }
         }
@@ -165,7 +190,7 @@ impl PureModel for EchoServerState {
 
         if *tock == false {
             // Update time information on each tick
-            dispatcher.dispatch(TimePureAction::Tick);
+            dispatch!(dispatcher, TimePureAction::Tick);
             *tock = true;
             // Return so the `TimePureAction::Tick` action can be processed.
             // On the next `EchoServerPureAction::Tick` we will have the updated time.
@@ -176,35 +201,44 @@ impl PureModel for EchoServerState {
 
         match status {
             // Init TCP model
-            ServerStatus::Uninitialized => dispatcher.dispatch(TcpPureAction::Init {
-                init_uid: state.new_uid(),
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (EchoServerInputAction::Init { uid, result }).into()
-                }),
-            }),
+            ServerStatus::Uninitialized => dispatch!(
+                dispatcher,
+                TcpPureAction::Init {
+                    init_uid: state.new_uid(),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (EchoServerInputAction::Init { uid, result }).into()
+                    }),
+                }
+            ),
             // Init TCP-server model
-            ServerStatus::Init => dispatcher.dispatch(TcpServerPureAction::New {
-                uid: state.new_uid(),
-                address: "127.0.0.1:8888".to_string(),
-                max_connections: 2,
-                on_new_connection: CompletionRoutine::new(|(_server_uid, connection_uid)| {
-                    (EchoServerInputAction::NewConnection { connection_uid }).into()
-                }),
-                on_close_connection: CompletionRoutine::new(|(_server_uid, connection_uid)| {
-                    (EchoServerInputAction::Closed { connection_uid }).into()
-                }),
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (EchoServerInputAction::InitCompleted { uid, result }).into()
-                }),
-            }),
+            ServerStatus::Init => dispatch!(
+                dispatcher,
+                TcpServerPureAction::New {
+                    uid: state.new_uid(),
+                    address: "127.0.0.1:8888".to_string(),
+                    max_connections: 2,
+                    on_new_connection: ResultDispatch::new(|(_server_uid, connection_uid)| {
+                        (EchoServerInputAction::NewConnection { connection_uid }).into()
+                    }),
+                    on_close_connection: ResultDispatch::new(|(_server_uid, connection_uid)| {
+                        (EchoServerInputAction::Closed { connection_uid }).into()
+                    }),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (EchoServerInputAction::InitCompleted { uid, result }).into()
+                    }),
+                }
+            ),
             // Poll events
-            ServerStatus::Ready => dispatcher.dispatch(TcpServerPureAction::Poll {
-                uid: state.new_uid(),
-                timeout: Some(250),
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (EchoServerInputAction::Poll { uid, result }).into()
-                }),
-            }),
+            ServerStatus::Ready => dispatch!(
+                dispatcher,
+                TcpServerPureAction::Poll {
+                    uid: state.new_uid(),
+                    timeout: Some(250),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (EchoServerInputAction::Poll { uid, result }).into()
+                    }),
+                }
+            ),
         }
     }
 }

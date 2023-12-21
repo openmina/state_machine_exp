@@ -62,6 +62,11 @@ pub struct AnyAction {
     pub kind: ActionKind,
     /// For printing/debug purpose only
     pub type_name: &'static str,
+    pub dispatched_from_file: &'static str,
+    pub dispatched_from_line: u32,
+    pub depth: usize,
+    pub action_id: u64,
+    pub caller: u64, // action id of caller action
 }
 
 impl<T: Action> From<T> for AnyAction {
@@ -73,14 +78,19 @@ impl<T: Action> From<T> for AnyAction {
             ptr: Box::new(v),
             kind: T::KIND,
             type_name: std::any::type_name::<T>(),
+            dispatched_from_file: "",
+            dispatched_from_line: 0,
+            depth: 0,
+            action_id: 0,
+            caller: 0
         }
     }
 }
 
 #[derive(PartialEq, Clone)]
-pub struct CompletionRoutine<R: Clone>(fn(R) -> AnyAction);
+pub struct ResultDispatch<R: Clone>(fn(R) -> AnyAction);
 
-impl<R: Clone> CompletionRoutine<R> {
+impl<R: Clone> ResultDispatch<R> {
     pub fn new(ptr: fn(R) -> AnyAction) -> Self {
         Self(ptr)
     }
@@ -90,7 +100,7 @@ impl<R: Clone> CompletionRoutine<R> {
     }
 }
 
-impl<R: Clone> fmt::Debug for CompletionRoutine<R> {
+impl<R: Clone> fmt::Debug for ResultDispatch<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "...")
     }
@@ -99,7 +109,10 @@ impl<R: Clone> fmt::Debug for CompletionRoutine<R> {
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
     tick: fn() -> AnyAction,
-    pub depth: usize, // for debug logs
+    // for debugging purposes
+    pub depth: usize,
+    pub action_id: u64,
+    pub caller: u64, // action id of the action being processed when the new action was dispatched
 }
 
 impl Dispatcher {
@@ -108,32 +121,73 @@ impl Dispatcher {
             queue: VecDeque::with_capacity(1024),
             tick,
             depth: 0,
+            action_id: 0,
+            caller: 0
         }
     }
 
     pub fn next_action(&mut self) -> AnyAction {
         self.queue.pop_front().unwrap_or_else(|| {
-            debug!("|DISPATCHER| {}", "TICK callback".yellow());
+            let mut any_action = (self.tick)();
+
+            any_action.action_id = self.action_id;
+            any_action.caller = 0;
             self.depth = 0;
-            (self.tick)()
+            self.action_id += 1;
+            self.caller = 0;
+            any_action
         })
     }
 
-    pub fn dispatch<A: Action>(&mut self, action: A)
+    pub fn dispatch<A: Action>(&mut self, action: A, file: &'static str, line: u32)
     where
         A: Sized + 'static,
     {
         assert_ne!(TypeId::of::<A>(), TypeId::of::<AnyAction>());
-        self.queue.push_back(action.into());
+        let mut any_action: AnyAction = action.into();
+
+        any_action.dispatched_from_file = file;
+        any_action.dispatched_from_line = line;
+        any_action.depth = self.depth + 1;
+        any_action.action_id = self.action_id;
+        any_action.caller = self.caller;
+        self.action_id += 1;
+        self.queue.push_back(any_action);
     }
 
-    pub fn completion_dispatch<R: Clone>(&mut self, on_result: &CompletionRoutine<R>, result: R)
-    where
+    pub fn dispatch_back<R: Clone>(
+        &mut self,
+        on_result: &ResultDispatch<R>,
+        result: R,
+        file: &'static str,
+        line: u32,
+    ) where
         R: Sized + 'static,
     {
-        let action = on_result.make(result);
-        assert_ne!(action.id, TypeId::of::<AnyAction>());
-        assert!(matches!(action.kind, ActionKind::Input));
-        self.queue.push_back(action);
+        let mut any_action = on_result.make(result);
+        assert_ne!(any_action.id, TypeId::of::<AnyAction>());
+        assert!(matches!(any_action.kind, ActionKind::Input));
+
+        any_action.dispatched_from_file = file;
+        any_action.dispatched_from_line = line;
+        any_action.depth = self.depth.saturating_sub(1);
+        any_action.action_id = self.action_id;
+        any_action.caller = self.caller;
+        self.action_id += 1;
+        self.queue.push_back(any_action);
     }
+}
+
+#[macro_export]
+macro_rules! dispatch {
+    ($dispatcher:expr, $action:expr) => {
+        $dispatcher.dispatch($action, file!(), line!())
+    };
+}
+
+#[macro_export]
+macro_rules! dispatch_back {
+    ($dispatcher:expr, $on_result:expr, $result:expr) => {
+        $dispatcher.dispatch_back($on_result, $result, file!(), line!())
+    };
 }

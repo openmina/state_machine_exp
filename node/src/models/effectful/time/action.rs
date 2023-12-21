@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::automaton::{
-    action::{Action, ActionKind, CompletionRoutine},
+    action::{Action, ActionKind, ResultDispatch},
     state::Uid,
 };
 
@@ -9,7 +9,7 @@ use crate::automaton::{
 pub enum TimeOutputAction {
     GetSystemTime {
         uid: Uid,
-        on_result: CompletionRoutine<(Uid, Duration)>,
+        on_result: ResultDispatch<(Uid, Duration)>,
     },
 }
 

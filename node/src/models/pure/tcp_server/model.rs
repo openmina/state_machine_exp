@@ -1,15 +1,17 @@
 use std::{collections::BTreeSet, rc::Rc};
 
+use log::{info, warn};
+
 use crate::{
     automaton::{
-        action::{CompletionRoutine, Dispatcher},
+        action::{Dispatcher, ResultDispatch},
         model::{InputModel, PureModel},
         state::{ModelState, State, Uid},
     },
     models::pure::tcp::{
         action::{ConnectResult, Event, ListenerEvent, PollResult, RecvResult, TcpPureAction},
         state::SendResult,
-    },
+    }, dispatch_back, dispatch,
 };
 
 use super::{
@@ -25,7 +27,7 @@ fn input_new(
 ) {
     let server = server_state.get_server(&uid);
 
-    dispatcher.completion_dispatch(&server.on_result, (uid, result.clone()));
+    dispatch_back!(dispatcher, &server.on_result, (uid, result.clone()));
 
     if result.is_err() {
         server_state.remove_server(&uid)
@@ -46,7 +48,7 @@ fn input_poll(
         Ok(events) => {
             for (uid, event) in events {
                 let Event::Listener(listener_event) = event else {
-                    panic!("Unrequested event type {:?} for Uid {:?}", event, uid)
+                    panic!("Unrequested event type {:?} for {:?}", event, uid)
                 };
 
                 match listener_event {
@@ -64,7 +66,7 @@ fn input_poll(
                 }
             }
         }
-        Err(err) => dispatcher.completion_dispatch(&request.on_result, (uid, Err(err))),
+        Err(err) => dispatch_back!(dispatcher, &request.on_result, (uid, Err(err))),
     }
 
     if !removed_list.is_empty() {
@@ -72,13 +74,13 @@ fn input_poll(
             "Server(s) (Uid(s): {:?}) in closed or invalid state",
             removed_list
         );
-        dispatcher.completion_dispatch(&request.on_result, (uid, Err(err)));
+        dispatch_back!(dispatcher, &request.on_result, (uid, Err(err)));
         removed_list
             .iter()
             .for_each(|uid| server_state.remove_server(uid));
         accept_list.clear();
     } else {
-        dispatcher.completion_dispatch(&request.on_result, (uid, Ok(())));
+        dispatch_back!(dispatcher, &request.on_result, (uid, Ok(())));
     }
 
     accept_list
@@ -92,10 +94,10 @@ fn accept_connections(
     // Dispatch (multiple) TCP accept actions to accept a new pending connection for each server instance
     for (listener_uid, connection_uid) in accept_pending {
         server_state.new_connection(connection_uid, listener_uid);
-        dispatcher.dispatch(TcpPureAction::Accept {
+        dispatch!(dispatcher, TcpPureAction::Accept {
             uid: connection_uid,
             listener_uid,
-            on_result: CompletionRoutine::new(|(uid, result)| {
+            on_result: ResultDispatch::new(|(uid, result)| {
                 (TcpServerInputAction::Accept { uid, result }).into()
             }),
         });
@@ -112,17 +114,21 @@ fn input_accept(
 
     if let ConnectResult::Success = result {
         // Notify registered callback of new connection
-        dispatcher.completion_dispatch(&server.on_new_connection, (*server_uid, uid));
+        info!("|TCP_SERVER| new connnection accepted {:?}", uid);
+        dispatch_back!(dispatcher, &server.on_new_connection, (*server_uid, uid));
     } else {
-        // TODO: add log of bad result
+        warn!(
+            "|TCP_SERVER| accept connection {:?} failed: {:?}",
+            uid, result
+        );
         server.remove_connection(&uid);
     }
 }
 
 fn input_close(server_state: &mut TcpServerState, dispatcher: &mut Dispatcher, uid: Uid) {
     let (server_uid, server) = server_state.get_connection_server_mut(&uid);
-
-    dispatcher.completion_dispatch(&server.on_close_connection, (*server_uid, uid));
+    info!("|TCP_SERVER| connection closed {:?}", uid);
+    dispatch_back!(dispatcher, &server.on_close_connection, (*server_uid, uid));
     server.remove_connection(&uid);
 }
 
@@ -139,16 +145,14 @@ fn input_send(
 
     match result {
         SendResult::Success | SendResult::Timeout => {
-            dispatcher.completion_dispatch(&on_result, (uid, result))
+            dispatch_back!(dispatcher, &on_result, (uid, result))
         }
         SendResult::Error(_) => {
-            dispatcher.dispatch(TcpPureAction::Close {
+            dispatch!(dispatcher, TcpPureAction::Close {
                 connection_uid,
-                on_result: CompletionRoutine::new(|uid| {
-                    (TcpServerInputAction::Close { uid }).into()
-                }),
+                on_result: ResultDispatch::new(|uid| (TcpServerInputAction::Close { uid }).into()),
             });
-            dispatcher.completion_dispatch(&on_result, (uid, result))
+            dispatch_back!(dispatcher, &on_result, (uid, result))
         }
     }
 }
@@ -166,16 +170,14 @@ fn input_recv(
 
     match result {
         RecvResult::Success(_) | RecvResult::Timeout(_) => {
-            dispatcher.completion_dispatch(&on_result, (uid, result))
+            dispatch_back!(dispatcher, &on_result, (uid, result))
         }
         RecvResult::Error(_) => {
-            dispatcher.dispatch(TcpPureAction::Close {
+            dispatch!(dispatcher, TcpPureAction::Close {
                 connection_uid,
-                on_result: CompletionRoutine::new(|uid| {
-                    (TcpServerInputAction::Close { uid }).into()
-                }),
+                on_result: ResultDispatch::new(|uid| (TcpServerInputAction::Close { uid }).into()),
             });
-            dispatcher.completion_dispatch(&on_result, (uid, result))
+            dispatch_back!(dispatcher, &on_result, (uid, result))
         }
     }
 }
@@ -222,9 +224,9 @@ fn pure_new(
     uid: Uid,
     address: String,
     max_connections: usize,
-    on_new_connection: CompletionRoutine<(Uid, Uid)>,
-    on_close_connection: CompletionRoutine<(Uid, Uid)>,
-    on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    on_new_connection: ResultDispatch<(Uid, Uid)>,
+    on_close_connection: ResultDispatch<(Uid, Uid)>,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     server_state.new_server(
         uid,
@@ -235,10 +237,10 @@ fn pure_new(
         on_result,
     );
 
-    dispatcher.dispatch(TcpPureAction::Listen {
+    dispatch!(dispatcher, TcpPureAction::Listen {
         uid,
         address,
-        on_result: CompletionRoutine::new(|(uid, result)| {
+        on_result: ResultDispatch::new(|(uid, result)| {
             (TcpServerInputAction::New { uid, result }).into()
         }),
     });
@@ -249,26 +251,26 @@ fn pure_poll(
     dispatcher: &mut Dispatcher,
     uid: Uid,
     timeout: Option<u64>,
-    on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     let objects = server_state.server_objects.keys().cloned().collect();
 
     server_state.set_poll_request(PollRequest { timeout, on_result });
 
-    dispatcher.dispatch(TcpPureAction::Poll {
+    dispatch!(dispatcher, TcpPureAction::Poll {
         uid,
         objects,
         timeout,
-        on_result: CompletionRoutine::new(|(uid, result)| {
+        on_result: ResultDispatch::new(|(uid, result)| {
             (TcpServerInputAction::Poll { uid, result }).into()
         }),
     })
 }
 
 fn pure_close(dispatcher: &mut Dispatcher, connection_uid: Uid) {
-    dispatcher.dispatch(TcpPureAction::Close {
+    dispatch!(dispatcher, TcpPureAction::Close {
         connection_uid,
-        on_result: CompletionRoutine::new(|uid| (TcpServerInputAction::Close { uid }).into()),
+        on_result: ResultDispatch::new(|uid| (TcpServerInputAction::Close { uid }).into()),
     })
 }
 
@@ -279,15 +281,15 @@ fn pure_send(
     connection_uid: Uid,
     data: Rc<[u8]>,
     timeout: Option<u64>,
-    on_result: CompletionRoutine<(Uid, SendResult)>,
+    on_result: ResultDispatch<(Uid, SendResult)>,
 ) {
     server_state.new_send_request(&uid, connection_uid, on_result);
-    dispatcher.dispatch(TcpPureAction::Send {
+    dispatch!(dispatcher, TcpPureAction::Send {
         uid,
         connection_uid,
         data,
         timeout,
-        on_result: CompletionRoutine::new(|(uid, result)| {
+        on_result: ResultDispatch::new(|(uid, result)| {
             (TcpServerInputAction::Send { uid, result }).into()
         }),
     });
@@ -300,15 +302,15 @@ fn pure_recv(
     connection_uid: Uid,
     count: usize,
     timeout: Option<u64>,
-    on_result: CompletionRoutine<(Uid, RecvResult)>,
+    on_result: ResultDispatch<(Uid, RecvResult)>,
 ) {
     server_state.new_recv_request(&uid, connection_uid, on_result);
-    dispatcher.dispatch(TcpPureAction::Recv {
+    dispatch!(dispatcher, TcpPureAction::Recv {
         uid,
         connection_uid,
         count,
         timeout,
-        on_result: CompletionRoutine::new(|(uid, result)| {
+        on_result: ResultDispatch::new(|(uid, result)| {
             (TcpServerInputAction::Recv { uid, result }).into()
         }),
     });

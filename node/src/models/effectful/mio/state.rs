@@ -33,13 +33,13 @@ impl MioState {
 
     fn new_poll(&mut self, uid: Uid, obj: Poll) {
         if self.poll_objects.borrow_mut().insert(uid, obj).is_some() {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
     fn new_events(&mut self, uid: Uid, obj: Events) {
         if self.events_objects.borrow_mut().insert(uid, obj).is_some() {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
@@ -50,7 +50,7 @@ impl MioState {
             .insert(uid, obj)
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
@@ -61,7 +61,7 @@ impl MioState {
             .insert(uid, obj)
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
@@ -76,7 +76,7 @@ impl MioState {
 
         let tcp_listener = tcp_listener_objects
             .get_mut(&tcp_listener_uid)
-            .unwrap_or_else(|| panic!("TcpListener object (uid {:?}) not found", tcp_listener_uid));
+            .unwrap_or_else(|| panic!("TcpListener object {:?} not found", tcp_listener_uid));
 
         if let Some(poll) = self.poll_objects.borrow().get(poll_uid) {
             poll.registry()
@@ -87,7 +87,7 @@ impl MioState {
                 )
                 .is_ok()
         } else {
-            panic!("Poll object not found (uid: {:?}", poll_uid)
+            panic!("Poll object not found {:?}", poll_uid)
         }
     }
 
@@ -96,7 +96,7 @@ impl MioState {
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(&connection_uid)
         else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         if let Some(poll) = self.poll_objects.borrow().get(poll_uid) {
@@ -108,7 +108,7 @@ impl MioState {
                 )
                 .is_ok()
         } else {
-            panic!("Poll object not found (uid: {:?}", poll_uid)
+            panic!("Poll object not found {:?}", poll_uid)
         }
     }
 
@@ -117,13 +117,13 @@ impl MioState {
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(&connection_uid)
         else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         if let Some(poll) = self.poll_objects.borrow().get(poll_uid) {
             poll.registry().deregister(stream).is_ok()
         } else {
-            panic!("Poll object not found (uid: {:?}", poll_uid)
+            panic!("Poll object not found {:?}", poll_uid)
         }
     }
 
@@ -136,7 +136,7 @@ impl MioState {
         if let Some(poll) = self.poll_objects.borrow_mut().get_mut(poll_uid) {
             let mut events_object = self.events_objects.borrow_mut();
             let Some(events) = events_object.get_mut(events_uid) else {
-                panic!("Events object not found (uid: {:?})", events_uid)
+                panic!("Events object not found {:?}", events_uid)
             };
 
             let timeout = timeout.and_then(|ms| Some(Duration::from_millis(ms)));
@@ -165,7 +165,7 @@ impl MioState {
                 }
             }
         } else {
-            panic!("Poll object not found (uid: {:?}", poll_uid)
+            panic!("Poll object not found {:?}", poll_uid)
         }
     }
 
@@ -191,7 +191,7 @@ impl MioState {
             let tcp_listener_objects = self.tcp_listener_objects.borrow();
             let tcp_listener = tcp_listener_objects
                 .get(listener_uid)
-                .unwrap_or_else(|| panic!("TcpListener object (uid {:?}) not found", uid));
+                .unwrap_or_else(|| panic!("TcpListener object {:?} not found", uid));
 
             tcp_listener.accept()
         };
@@ -222,7 +222,7 @@ impl MioState {
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.remove(connection_uid)
         else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         drop(stream); // not necessary, just to make the intention of closing the stream explicit
@@ -233,7 +233,7 @@ impl MioState {
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(connection_uid)
         else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         match stream.write(data) {
@@ -256,7 +256,7 @@ impl MioState {
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get_mut(connection_uid)
         else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         let mut recv_buf = vec![0u8; len];
@@ -277,7 +277,7 @@ impl MioState {
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow();
 
         let Some(TcpConnection { stream, .. }) = tcp_connection_objects.get(connection_uid) else {
-            panic!("TcpConnection object not found (Uid: {:?}", connection_uid)
+            panic!("TcpConnection object not found {:?}", connection_uid)
         };
 
         match stream.peer_addr() {

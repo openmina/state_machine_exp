@@ -1,12 +1,15 @@
 use core::panic;
 use std::rc::Rc;
 
+use log::info;
+
 use crate::{
     automaton::{
-        action::{CompletionRoutine, Dispatcher},
+        action::{Dispatcher, ResultDispatch},
         model::{InputModel, PureModel},
         state::{ModelState, State, Uid},
     },
+    dispatch, dispatch_back,
     models::{
         effectful::mio::action::{
             MioOutputAction, PollEventsResult, TcpReadResult, TcpWriteResult,
@@ -46,11 +49,14 @@ fn input_poll_create(
     {
         if success {
             // Dispatch next action to continue initialization
-            dispatcher.dispatch(MioOutputAction::EventsCreate {
-                uid: events_uid,
-                capacity: 1024,
-                on_result: CompletionRoutine::new(|uid| TcpInputAction::EventsCreate(uid).into()),
-            });
+            dispatch!(
+                dispatcher,
+                MioOutputAction::EventsCreate {
+                    uid: events_uid,
+                    capacity: 1024,
+                    on_result: ResultDispatch::new(|uid| TcpInputAction::EventsCreate(uid).into()),
+                }
+            );
 
             // next state
             tcp_state.status = Status::InitEventsCreate {
@@ -61,8 +67,11 @@ fn input_poll_create(
             };
         } else {
             // dispatch error to caller
-            dispatcher
-                .completion_dispatch(on_result, (init_uid, Err("PollCreate failed".to_string())));
+            dispatch_back!(
+                dispatcher,
+                on_result,
+                (init_uid, Err("PollCreate failed".to_string()))
+            );
 
             // set init error state
             tcp_state.status = Status::InitError { init_uid };
@@ -80,7 +89,7 @@ fn input_events_create(tcp_state: &mut TcpState, dispatcher: &mut Dispatcher) {
         ref on_result,
     } = tcp_state.status
     {
-        dispatcher.completion_dispatch(&on_result, (init_uid, Ok(())));
+        dispatch_back!(dispatcher, &on_result, (init_uid, Ok(())));
 
         tcp_state.status = Status::Ready {
             init_uid,
@@ -103,15 +112,22 @@ fn input_listen(
         };
 
         // We will dispath the completion routine to the caller from `input_register_listener`
-        dispatcher.dispatch(MioOutputAction::PollRegisterTcpServer {
-            poll_uid,
-            tcp_listener_uid: *uid,
-            on_result: CompletionRoutine::new(|(uid, result)| {
-                (TcpInputAction::RegisterListener { uid, result }).into()
-            }),
-        });
+        dispatch!(
+            dispatcher,
+            MioOutputAction::PollRegisterTcpServer {
+                poll_uid,
+                tcp_listener_uid: *uid,
+                on_result: ResultDispatch::new(|(uid, result)| {
+                    (TcpInputAction::RegisterListener { uid, result }).into()
+                })
+            }
+        );
     } else {
-        dispatcher.completion_dispatch(&tcp_state.get_listener(uid).on_result, (*uid, result));
+        dispatch_back!(
+            dispatcher,
+            &tcp_state.get_listener(uid).on_result,
+            (*uid, result)
+        );
         tcp_state.remove_listener(uid);
     }
 }
@@ -125,10 +141,10 @@ fn input_register_listener(
     let Listener { on_result, .. } = tcp_state.get_listener(uid);
 
     if result {
-        dispatcher.completion_dispatch(&on_result, (*uid, Ok(())));
+        dispatch_back!(dispatcher, &on_result, (*uid, Ok(())));
     } else {
         let error = format!("Error registering listener {:?}", uid);
-        dispatcher.completion_dispatch(&on_result, (*uid, Err(error)));
+        dispatch_back!(dispatcher, &on_result, (*uid, Err(error)));
         tcp_state.remove_listener(uid)
     }
 }
@@ -146,7 +162,7 @@ fn input_accept(
     } = tcp_state.get_connection(uid);
     let ConnectionType::Incoming(listener_uid) = conn_type else {
         panic!(
-            "Accept callback on invalid connection type (Uid: {:?}) conn_type: {:?}",
+            "Accept callback {:?} on invalid connection type {:?}",
             uid, conn_type
         );
     };
@@ -158,19 +174,26 @@ fn input_accept(
             let Status::Ready { poll_uid, .. } = tcp_state.status else {
                 unreachable!()
             };
+            info!(
+                "|TCP| connection accepted {:?}, registering it in poll list",
+                uid
+            );
 
             // We will dispath the completion routine to the caller from `input_register_connection`
-            dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
-                poll_uid,
-                connection_uid: *uid,
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (TcpInputAction::RegisterConnection { uid, result }).into()
-                }),
-            });
+            dispatch!(
+                dispatcher,
+                MioOutputAction::PollRegisterTcpConnection {
+                    poll_uid,
+                    connection_uid: *uid,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (TcpInputAction::RegisterConnection { uid, result }).into()
+                    }),
+                }
+            );
         }
         Err(error) => {
             // Dispatch error result now
-            dispatcher.completion_dispatch(&on_result, (*uid, ConnectResult::Error(error)));
+            dispatch_back!(dispatcher, &on_result, (*uid, ConnectResult::Error(error)));
             remove = true;
         }
     }
@@ -194,13 +217,13 @@ fn input_close_connection(tcp_state: &mut TcpState, dispatcher: &mut Dispatcher,
     } = connection
     else {
         panic!(
-            "Close callback called on connection (Uid: {:?}) with invalid status {:?}",
+            "Close callback called on connection {:?} with invalid status {:?}",
             uid, connection.status
         )
     };
 
     if let Some(on_result) = maybe_completion {
-        dispatcher.completion_dispatch(&on_result, uid);
+        dispatch_back!(dispatcher, &on_result, uid);
     }
 
     tcp_state.remove_connection(&uid);
@@ -213,20 +236,38 @@ fn input_register_connection(
     result: bool,
 ) {
     let Connection {
-        status, on_result, ..
+        status,
+        conn_type,
+        on_result,
+        ..
     } = tcp_state.get_connection_mut(&connection_uid);
 
     if !result {
         *status = ConnectionStatus::CloseRequest(None);
-        dispatcher.dispatch(MioOutputAction::TcpClose {
-            connection_uid,
-            on_result: CompletionRoutine::new(|uid| {
-                (TcpInputAction::CloseConnection { uid }).into()
-            }),
-        });
+        dispatch!(
+            dispatcher,
+            MioOutputAction::TcpClose {
+                connection_uid,
+                on_result: ResultDispatch::new(
+                    |uid| (TcpInputAction::CloseConnection { uid }).into()
+                ),
+            }
+        );
 
         let error = format!("Error registering connection {:?}", connection_uid);
-        dispatcher.completion_dispatch(&on_result, (connection_uid, ConnectResult::Error(error)));
+        dispatch_back!(
+            dispatcher,
+            &on_result,
+            (connection_uid, ConnectResult::Error(error))
+        );
+    } else {
+        if let ConnectionType::Incoming(_) = conn_type {
+            dispatch_back!(
+                dispatcher,
+                &on_result,
+                (connection_uid, ConnectResult::Success)
+            );
+        }
     }
 }
 
@@ -237,12 +278,15 @@ fn input_deregister_connection(
     result: bool,
 ) {
     if result {
-        dispatcher.dispatch(MioOutputAction::TcpClose {
-            connection_uid: uid,
-            on_result: CompletionRoutine::new(|uid| {
-                (TcpInputAction::CloseConnection { uid }).into()
-            }),
-        });
+        dispatch!(
+            dispatcher,
+            MioOutputAction::TcpClose {
+                connection_uid: uid,
+                on_result: ResultDispatch::new(
+                    |uid| (TcpInputAction::CloseConnection { uid }).into()
+                ),
+            }
+        );
     } else {
         panic!("Error de-registering connection {:?}", uid)
     }
@@ -269,16 +313,19 @@ fn input_connect(
             };
 
             // We will dispath the completion routine to the caller from `input_register_connection`
-            dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
-                poll_uid,
-                connection_uid: *uid,
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (TcpInputAction::RegisterConnection { uid, result }).into()
-                }),
-            });
+            dispatch!(
+                dispatcher,
+                MioOutputAction::PollRegisterTcpConnection {
+                    poll_uid,
+                    connection_uid: *uid,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (TcpInputAction::RegisterConnection { uid, result }).into()
+                    }),
+                }
+            );
         }
         Err(error) => {
-            dispatcher.completion_dispatch(&on_result, (*uid, ConnectResult::Error(error)));
+            dispatch_back!(dispatcher, &on_result, (*uid, ConnectResult::Error(error)));
             tcp_state.remove_connection(uid);
         }
     }
@@ -301,20 +348,25 @@ fn input_pending_connections(
         },
     ) in tcp_state.pending_connections_mut()
     {
+        info!("|TCP| input_pending_connections {:?}: {:?}", uid, status);
+
         let timeout = timeout.is_some_and(|timeout| current_time >= timeout);
 
         if timeout {
-            dispatcher.completion_dispatch(&on_result, (uid, ConnectResult::Timeout));
+            dispatch_back!(dispatcher, &on_result, (uid, ConnectResult::Timeout));
             purge_requests.push(uid);
         } else {
             match status {
                 ConnectionStatus::Pending => {
-                    dispatcher.dispatch(MioOutputAction::TcpGetPeerAddress {
-                        connection_uid: uid,
-                        on_result: CompletionRoutine::new(|(uid, result)| {
-                            (TcpInputAction::PeerAddress { uid, result }).into()
-                        }),
-                    });
+                    dispatch!(
+                        dispatcher,
+                        MioOutputAction::TcpGetPeerAddress {
+                            connection_uid: uid,
+                            on_result: ResultDispatch::new(|(uid, result)| {
+                                (TcpInputAction::PeerAddress { uid, result }).into()
+                            }),
+                        }
+                    );
                     *status = ConnectionStatus::PendingCheck;
                 }
                 ConnectionStatus::PendingCheck => (),
@@ -397,39 +449,44 @@ fn input_pending_send_requests_aux(
         match event {
             ConnectionEvent::Ready { send: true, .. } => {
                 if timeout {
-                    dispatcher.completion_dispatch(&on_result, (uid, SendResult::Timeout));
+                    dispatch_back!(dispatcher, &on_result, (uid, SendResult::Timeout));
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioOutputAction::TcpWrite {
-                        uid,
-                        connection_uid: *connection_uid,
-                        data: (&data[*bytes_sent..]).into(),
-                        on_result: CompletionRoutine::new(|(uid, result)| {
-                            (TcpInputAction::Send { uid, result }).into()
-                        }),
-                    });
+                    dispatch!(
+                        dispatcher,
+                        MioOutputAction::TcpWrite {
+                            uid,
+                            connection_uid: *connection_uid,
+                            data: (&data[*bytes_sent..]).into(),
+                            on_result: ResultDispatch::new(|(uid, result)| {
+                                (TcpInputAction::Send { uid, result }).into()
+                            }),
+                        }
+                    );
 
                     dispatched_requests.push(uid);
                 }
             }
             ConnectionEvent::Ready { send: false, .. } => {
                 if timeout {
-                    dispatcher.completion_dispatch(&on_result, (uid, SendResult::Timeout));
+                    dispatch_back!(dispatcher, &on_result, (uid, SendResult::Timeout));
                     purge_requests.push(uid);
                 }
             }
             ConnectionEvent::Closed => {
-                dispatcher.completion_dispatch(
+                dispatch_back!(
+                    dispatcher,
                     &on_result,
-                    (uid, SendResult::Error("Connection closed".to_string())),
+                    (uid, SendResult::Error("Connection closed".to_string()))
                 );
 
                 purge_requests.push(uid);
             }
             ConnectionEvent::Error => {
-                dispatcher.completion_dispatch(
+                dispatch_back!(
+                    dispatcher,
                     &on_result,
-                    (uid, SendResult::Error("Connection error".to_string())),
+                    (uid, SendResult::Error("Connection error".to_string()))
                 );
 
                 purge_requests.push(uid);
@@ -511,45 +568,52 @@ fn input_pending_recv_requests_aux(
         match event {
             ConnectionEvent::Ready { recv: true, .. } => {
                 if timeout {
-                    dispatcher.completion_dispatch(
+                    dispatch_back!(
+                        dispatcher,
                         &on_result,
-                        (uid, RecvResult::Timeout(data[0..*bytes_received].to_vec())),
+                        (uid, RecvResult::Timeout(data[0..*bytes_received].to_vec()))
                     );
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioOutputAction::TcpRead {
-                        uid,
-                        connection_uid: *connection_uid,
-                        len: data.len().saturating_sub(*bytes_received),
-                        on_result: CompletionRoutine::new(|(uid, result)| {
-                            (TcpInputAction::Recv { uid, result }).into()
-                        }),
-                    });
+                    dispatch!(
+                        dispatcher,
+                        MioOutputAction::TcpRead {
+                            uid,
+                            connection_uid: *connection_uid,
+                            len: data.len().saturating_sub(*bytes_received),
+                            on_result: ResultDispatch::new(|(uid, result)| {
+                                (TcpInputAction::Recv { uid, result }).into()
+                            }),
+                        }
+                    );
 
                     dispatched_requests.push(uid);
                 }
             }
             ConnectionEvent::Ready { recv: false, .. } => {
                 if timeout {
-                    dispatcher.completion_dispatch(
+                    dispatch_back!(
+                        dispatcher,
                         &on_result,
-                        (uid, RecvResult::Timeout(data[0..*bytes_received].to_vec())),
+                        (uid, RecvResult::Timeout(data[0..*bytes_received].to_vec()))
                     );
                     purge_requests.push(uid);
                 }
             }
             ConnectionEvent::Closed => {
-                dispatcher.completion_dispatch(
+                dispatch_back!(
+                    dispatcher,
                     &on_result,
-                    (uid, RecvResult::Error("Connection closed".to_string())),
+                    (uid, RecvResult::Error("Connection closed".to_string()))
                 );
 
                 purge_requests.push(uid);
             }
             ConnectionEvent::Error => {
-                dispatcher.completion_dispatch(
+                dispatch_back!(
+                    dispatcher,
                     &on_result,
-                    (uid, RecvResult::Error("Connection error".to_string())),
+                    (uid, RecvResult::Error("Connection error".to_string()))
                 );
 
                 purge_requests.push(uid);
@@ -586,12 +650,12 @@ fn input_poll(
                 .filter_map(|uid| tcp_state.get_events(uid))
                 .collect();
 
-            dispatcher.completion_dispatch(&request.on_result, (uid, Ok(events)));
+            dispatch_back!(dispatcher, &request.on_result, (uid, Ok(events)));
             tcp_state.remove_poll_request(&uid)
         }
         PollEventsResult::Error(err) => {
             let PollRequest { on_result, .. } = tcp_state.get_poll_request(&uid);
-            dispatcher.completion_dispatch(&on_result, (uid, Err(err)));
+            dispatch_back!(dispatcher, &on_result, (uid, Err(err)));
             tcp_state.remove_poll_request(&uid)
         }
         PollEventsResult::Interrupted => {
@@ -606,21 +670,24 @@ fn input_poll(
                 unreachable!()
             };
 
-            dispatcher.dispatch(MioOutputAction::PollEvents {
-                uid,
-                poll_uid,
-                events_uid,
-                timeout,
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (TcpInputAction::Poll { uid, result }).into()
-                }),
-            })
+            dispatch!(
+                dispatcher,
+                MioOutputAction::PollEvents {
+                    uid,
+                    poll_uid,
+                    events_uid,
+                    timeout,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (TcpInputAction::Poll { uid, result }).into()
+                    }),
+                }
+            )
         }
     }
 }
 
 fn dispatch_send(
-    tcp_state: &TcpState,
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     uid: Uid,
     set_send_on_poll: &mut bool,
@@ -636,14 +703,17 @@ fn dispatch_send(
 
     match event {
         ConnectionEvent::Ready { send: true, .. } => {
-            dispatcher.dispatch(MioOutputAction::TcpWrite {
-                uid,
-                connection_uid: *connection_uid,
-                data: (&data[*bytes_sent..]).into(),
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (TcpInputAction::Send { uid, result }).into()
-                }),
-            });
+            dispatch!(
+                dispatcher,
+                MioOutputAction::TcpWrite {
+                    uid,
+                    connection_uid: *connection_uid,
+                    data: (&data[*bytes_sent..]).into(),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (TcpInputAction::Send { uid, result }).into()
+                    }),
+                }
+            );
         }
         ConnectionEvent::Ready { send: false, .. } => {
             // TODO: check timeout and dispatch caller
@@ -651,21 +721,33 @@ fn dispatch_send(
         }
         ConnectionEvent::Closed => {
             // Send failed, notify caller
-            dispatcher.completion_dispatch(
+            dispatch_back!(
+                dispatcher,
                 &on_result,
-                (uid, SendResult::Error("Connection closed".to_string())),
+                (uid, SendResult::Error("Connection closed".to_string()))
             );
             return true;
         }
         ConnectionEvent::Error => {
             // Send failed, notify caller
-            dispatcher.completion_dispatch(
+            dispatch_back!(
+                dispatcher,
                 &on_result,
-                (uid, SendResult::Error("Connection error".to_string())),
+                (uid, SendResult::Error("Connection error".to_string()))
             );
             return true;
         }
     }
+
+    let connection_uid = *connection_uid;
+
+    // Unset the send-ready event to prevent dispatching consecutive send actions
+    if let ConnectionEvent::Ready { send, .. } =
+        tcp_state.get_connection_mut(&connection_uid).events_mut()
+    {
+        *send = false;
+    }
+
     return false;
 }
 
@@ -716,17 +798,21 @@ fn input_send_aux(
         // if there was a timeout but we already written all or got an error we will let it pass..
         TcpWriteResult::WrittenAll => {
             // Send complete, notify caller
-            dispatcher.completion_dispatch(&request.on_result, (uid, SendResult::Success));
+            dispatch_back!(dispatcher, &request.on_result, (uid, SendResult::Success));
             true
         }
         TcpWriteResult::Error(error) => {
             // Send failed, notify caller
-            dispatcher.completion_dispatch(&request.on_result, (uid, SendResult::Error(error)));
+            dispatch_back!(
+                dispatcher,
+                &request.on_result,
+                (uid, SendResult::Error(error))
+            );
             true
         }
         TcpWriteResult::WrittenPartial(count) => {
             if timeout {
-                dispatcher.completion_dispatch(&request.on_result, (uid, SendResult::Timeout));
+                dispatch_back!(dispatcher, &request.on_result, (uid, SendResult::Timeout));
                 true
             } else {
                 request.bytes_sent += count;
@@ -735,7 +821,7 @@ fn input_send_aux(
         }
         TcpWriteResult::Interrupted => {
             if timeout {
-                dispatcher.completion_dispatch(&request.on_result, (uid, SendResult::Timeout));
+                dispatch_back!(dispatcher, &request.on_result, (uid, SendResult::Timeout));
                 true
             } else {
                 false
@@ -745,7 +831,7 @@ fn input_send_aux(
 }
 
 fn dispatch_recv(
-    tcp_state: &TcpState,
+    tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     uid: Uid,
     set_recv_on_poll: &mut bool,
@@ -761,36 +847,51 @@ fn dispatch_recv(
 
     match event {
         ConnectionEvent::Ready { recv: true, .. } => {
-            dispatcher.dispatch(MioOutputAction::TcpRead {
-                uid,
-                connection_uid: *connection_uid,
-                len: data.len().saturating_sub(*bytes_received),
-                on_result: CompletionRoutine::new(|(uid, result)| {
-                    (TcpInputAction::Recv { uid, result }).into()
-                }),
-            });
+            dispatch!(
+                dispatcher,
+                MioOutputAction::TcpRead {
+                    uid,
+                    connection_uid: *connection_uid,
+                    len: data.len().saturating_sub(*bytes_received),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        (TcpInputAction::Recv { uid, result }).into()
+                    }),
+                }
+            );
         }
         ConnectionEvent::Ready { recv: false, .. } => {
             // TODO: check timeouts and dispatch caller
             *set_recv_on_poll = true;
         }
         ConnectionEvent::Closed => {
-            // Send failed, notify caller
-            dispatcher.completion_dispatch(
+            // Recv failed, notify caller
+            dispatch_back!(
+                dispatcher,
                 &on_result,
-                (uid, RecvResult::Error("Connection closed".to_string())),
+                (uid, RecvResult::Error("Connection closed".to_string()))
             );
             return true;
         }
         ConnectionEvent::Error => {
-            // Send failed, notify caller
-            dispatcher.completion_dispatch(
+            // Recv failed, notify caller
+            dispatch_back!(
+                dispatcher,
                 &on_result,
-                (uid, RecvResult::Error("Connection error".to_string())),
+                (uid, RecvResult::Error("Connection error".to_string()))
             );
             return true;
         }
     }
+
+    let connection_uid = *connection_uid;
+
+    // Unset the recv-ready event to prevent dispatching consecutive recv actions
+    if let ConnectionEvent::Ready { recv, .. } =
+        tcp_state.get_connection_mut(&connection_uid).events_mut()
+    {
+        *recv = false;
+    }
+
     return false;
 }
 
@@ -841,18 +942,29 @@ fn input_recv_aux(
         // if there was a timeout but we recevied all data or there was an error we let it pass...
         TcpReadResult::ReadAll(data) => {
             // Recv complete, notify caller
-            dispatcher.completion_dispatch(&request.on_result, (uid, RecvResult::Success(data)));
+            dispatch_back!(
+                dispatcher,
+                &request.on_result,
+                (uid, RecvResult::Success(data))
+            );
             true
         }
         TcpReadResult::Error(error) => {
             // Recv failed, notify caller
-            dispatcher.completion_dispatch(&request.on_result, (uid, RecvResult::Error(error)));
+            dispatch_back!(
+                dispatcher,
+                &request.on_result,
+                (uid, RecvResult::Error(error))
+            );
             true
         }
         TcpReadResult::ReadPartial(data) => {
             if timeout {
-                dispatcher
-                    .completion_dispatch(&request.on_result, (uid, RecvResult::Timeout(data)));
+                dispatch_back!(
+                    dispatcher,
+                    &request.on_result,
+                    (uid, RecvResult::Timeout(data))
+                );
                 true
             } else {
                 let start_offset = request.bytes_received;
@@ -865,8 +977,11 @@ fn input_recv_aux(
         TcpReadResult::Interrupted => {
             if timeout {
                 let data = request.data[0..request.bytes_received].to_vec();
-                dispatcher
-                    .completion_dispatch(&request.on_result, (uid, RecvResult::Timeout(data)));
+                dispatch_back!(
+                    dispatcher,
+                    &request.on_result,
+                    (uid, RecvResult::Timeout(data))
+                );
                 true
             } else {
                 false
@@ -886,6 +1001,8 @@ fn input_peer_address(
     } = tcp_state.get_connection_mut(&uid);
     let mut remove = false;
 
+    info!("|TCP| input_peer_address {:?} result: {:?}", uid, result);
+
     if let ConnectionStatus::PendingCheck = status {
         let result = match result {
             Ok(_) => {
@@ -898,14 +1015,14 @@ fn input_peer_address(
             }
         };
 
-        dispatcher.completion_dispatch(on_result, (uid, result));
+        dispatch_back!(dispatcher, on_result, (uid, result));
 
         if remove {
             tcp_state.remove_connection(&uid)
         }
     } else {
         panic!(
-            "PeerAddress action received for connection (uid: {:?}) with wrong status {:?}",
+            "PeerAddress action received for connection {:?} with wrong status {:?}",
             uid, status
         )
     }
@@ -995,19 +1112,22 @@ fn pure_init(
     dispatcher: &mut Dispatcher,
     init_uid: Uid,
     poll_uid: Uid,
-    on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     tcp_state.status = Status::InitPollCreate {
         init_uid,
         poll_uid,
         on_result,
     };
-    dispatcher.dispatch(MioOutputAction::PollCreate {
-        uid: poll_uid,
-        on_result: CompletionRoutine::new(|(uid, success)| {
-            (TcpInputAction::PollCreate { uid, success }).into()
-        }),
-    });
+    dispatch!(
+        dispatcher,
+        MioOutputAction::PollCreate {
+            uid: poll_uid,
+            on_result: ResultDispatch::new(|(uid, success)| {
+                (TcpInputAction::PollCreate { uid, success }).into()
+            }),
+        }
+    );
 }
 
 fn pure_listen(
@@ -1015,18 +1135,21 @@ fn pure_listen(
     dispatcher: &mut Dispatcher,
     uid: Uid,
     address: String,
-    on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     assert!(tcp_state.is_ready());
 
     tcp_state.new_listener(uid, address.clone(), on_result);
-    dispatcher.dispatch(MioOutputAction::TcpListen {
-        uid,
-        address,
-        on_result: CompletionRoutine::new(|(uid, result)| {
-            (TcpInputAction::Listen { uid, result }).into()
-        }),
-    });
+    dispatch!(
+        dispatcher,
+        MioOutputAction::TcpListen {
+            uid,
+            address,
+            on_result: ResultDispatch::new(|(uid, result)| {
+                (TcpInputAction::Listen { uid, result }).into()
+            }),
+        }
+    );
 }
 
 fn pure_accept(
@@ -1034,7 +1157,7 @@ fn pure_accept(
     dispatcher: &mut Dispatcher,
     uid: Uid,
     listener_uid: Uid,
-    on_result: CompletionRoutine<(Uid, ConnectResult)>,
+    on_result: ResultDispatch<(Uid, ConnectResult)>,
 ) {
     assert!(tcp_state.is_ready());
     assert!(matches!(
@@ -1044,13 +1167,16 @@ fn pure_accept(
     let conn_type = ConnectionType::Incoming(listener_uid);
 
     tcp_state.new_connection(uid, conn_type, None, on_result);
-    dispatcher.dispatch(MioOutputAction::TcpAccept {
-        uid,
-        listener_uid,
-        on_result: CompletionRoutine::new(|(uid, result)| {
-            (TcpInputAction::Accept { uid, result }).into()
-        }),
-    });
+    dispatch!(
+        dispatcher,
+        MioOutputAction::TcpAccept {
+            uid,
+            listener_uid,
+            on_result: ResultDispatch::new(|(uid, result)| {
+                (TcpInputAction::Accept { uid, result }).into()
+            }),
+        }
+    );
 }
 
 fn pure_connect(
@@ -1059,25 +1185,28 @@ fn pure_connect(
     uid: Uid,
     address: String,
     timeout: Option<u128>,
-    on_result: CompletionRoutine<(Uid, ConnectResult)>,
+    on_result: ResultDispatch<(Uid, ConnectResult)>,
 ) {
     assert!(tcp_state.is_ready());
 
     tcp_state.new_connection(uid, ConnectionType::Outgoing, timeout, on_result);
-    dispatcher.dispatch(MioOutputAction::TcpConnect {
-        uid,
-        address,
-        on_result: CompletionRoutine::new(|(uid, result)| {
-            (TcpInputAction::Connect { uid, result }).into()
-        }),
-    });
+    dispatch!(
+        dispatcher,
+        MioOutputAction::TcpConnect {
+            uid,
+            address,
+            on_result: ResultDispatch::new(|(uid, result)| {
+                (TcpInputAction::Connect { uid, result }).into()
+            }),
+        }
+    );
 }
 
 fn pure_close(
     tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     connection_uid: Uid,
-    on_result: CompletionRoutine<Uid>,
+    on_result: ResultDispatch<Uid>,
 ) {
     let Status::Ready { poll_uid, .. } = tcp_state.status else {
         unreachable!()
@@ -1088,13 +1217,16 @@ fn pure_close(
     *status = ConnectionStatus::CloseRequest(Some(on_result));
 
     // before closing the stream we remove it from the poll object
-    dispatcher.dispatch(MioOutputAction::PollDeregisterTcpConnection {
-        poll_uid,
-        connection_uid,
-        on_result: CompletionRoutine::new(|(uid, result)| {
-            (TcpInputAction::DeregisterConnection { uid, result }).into()
-        }),
-    });
+    dispatch!(
+        dispatcher,
+        MioOutputAction::PollDeregisterTcpConnection {
+            poll_uid,
+            connection_uid,
+            on_result: ResultDispatch::new(|(uid, result)| {
+                (TcpInputAction::DeregisterConnection { uid, result }).into()
+            }),
+        }
+    );
 }
 
 fn pure_poll(
@@ -1103,7 +1235,7 @@ fn pure_poll(
     uid: Uid,
     objects: Vec<Uid>,
     timeout: Option<u64>,
-    on_result: CompletionRoutine<(Uid, PollResult)>,
+    on_result: ResultDispatch<(Uid, PollResult)>,
 ) {
     let Status::Ready {
         init_uid: _,
@@ -1115,15 +1247,18 @@ fn pure_poll(
     };
 
     tcp_state.new_poll(uid, objects, timeout, on_result);
-    dispatcher.dispatch(MioOutputAction::PollEvents {
-        uid,
-        poll_uid,
-        events_uid,
-        timeout,
-        on_result: CompletionRoutine::new(|(uid, result)| {
-            (TcpInputAction::Poll { uid, result }).into()
-        }),
-    })
+    dispatch!(
+        dispatcher,
+        MioOutputAction::PollEvents {
+            uid,
+            poll_uid,
+            events_uid,
+            timeout,
+            on_result: ResultDispatch::new(|(uid, result)| {
+                (TcpInputAction::Poll { uid, result }).into()
+            }),
+        }
+    )
 }
 
 fn pure_send(
@@ -1133,9 +1268,18 @@ fn pure_send(
     connection_uid: Uid,
     data: Rc<[u8]>,
     timeout: Option<u128>,
-    on_result: CompletionRoutine<(Uid, SendResult)>,
+    on_result: ResultDispatch<(Uid, SendResult)>,
 ) {
     assert!(tcp_state.is_ready());
+
+    if !tcp_state.has_connection(&connection_uid) {
+        dispatch_back!(
+            dispatcher,
+            &on_result,
+            (uid, SendResult::Error("No such connection".to_string()))
+        );
+        return;
+    }
 
     let mut set_send_on_poll = false;
 
@@ -1165,9 +1309,18 @@ fn pure_recv(
     connection_uid: Uid,
     count: usize,
     timeout: Option<u128>,
-    on_result: CompletionRoutine<(Uid, RecvResult)>,
+    on_result: ResultDispatch<(Uid, RecvResult)>,
 ) {
     assert!(tcp_state.is_ready());
+
+    if !tcp_state.has_connection(&connection_uid) {
+        dispatch_back!(
+            dispatcher,
+            &on_result,
+            (uid, RecvResult::Error("No such connection".to_string()))
+        );
+        return;
+    }
 
     let mut set_recv_on_poll = false;
 

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     automaton::{
-        action::{Action, ActionKind, CompletionRoutine},
+        action::{Action, ActionKind, ResultDispatch},
         state::Uid,
     },
     models::pure::tcp::{
@@ -17,14 +17,14 @@ pub enum TcpServerPureAction {
         uid: Uid,
         address: String,
         max_connections: usize,
-        on_new_connection: CompletionRoutine<(Uid, Uid)>, // (server_uid, new_connection_uid)
-        on_close_connection: CompletionRoutine<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_new_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
+        on_close_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, connection_uid)
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Poll {
         uid: Uid,
         timeout: Option<u64>,
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Close {
         connection_uid: Uid,
@@ -34,14 +34,14 @@ pub enum TcpServerPureAction {
         connection_uid: Uid,
         data: Rc<[u8]>,
         timeout: Option<u64>,
-        on_result: CompletionRoutine<(Uid, SendResult)>,
+        on_result: ResultDispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
         count: usize, // number of bytes to read
         timeout: Option<u64>,
-        on_result: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
     },
 }
 

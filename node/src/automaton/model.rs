@@ -118,13 +118,34 @@ impl<T: PureModel> PrivateModel for Pure<T> {
         let Ok(unboxed_action) = action.ptr.downcast::<T::Action>() else {
             panic!("action not found")
         };
+
+        let from = if action.depth == 0 {
+            format!(
+                "from DISPATCHER TICK ({}→{})",
+                action.caller, action.action_id
+            )
+        } else {
+            format!(
+                "from {}:{} ({}→{})",
+                action.dispatched_from_file,
+                action.dispatched_from_line,
+                action.caller,
+                action.action_id
+            )
+        };
+
+        let pad = "  ".repeat(action.depth);
         debug!(
-            "{}{}::{:?}",
-            " ".repeat(dispatcher.depth),
-            action.type_name.bright_blue(),
-            unboxed_action
+            "→{} {}::{:?}\n\t\t {} {}",
+            pad,
+            action.type_name,
+            unboxed_action,
+            pad,
+            from.bright_black()
         );
-        dispatcher.depth += 1;
+
+        dispatcher.depth = action.depth;
+        dispatcher.caller = action.action_id;
         T::process_pure(state, *unboxed_action, dispatcher)
     }
 }
@@ -154,14 +175,25 @@ impl<T: InputModel> PrivateModel for Input<T> {
             panic!("action not found")
         };
 
-        dispatcher.depth = dispatcher.depth.saturating_sub(1);
+        let pad = "  ".repeat(action.depth);
         debug!(
-            "{}{}::{:?}",
-            " ".repeat(dispatcher.depth),
-            action.type_name.cyan(),
-            unboxed_action
+            "←{} {}::{}\n\t\t {} {}",
+            pad,
+            action.type_name.bright_cyan(),
+            format!("{:?}", unboxed_action).bright_cyan(),
+            pad,
+            format!(
+                "from {}:{} ({}→{})",
+                action.dispatched_from_file,
+                action.dispatched_from_line,
+                action.caller,
+                action.action_id
+            )
+            .bright_black()
         );
 
+        dispatcher.depth = action.depth;
+        dispatcher.caller = action.action_id;
         // TODO: add record logic
         T::process_input(state, *unboxed_action, dispatcher)
     }
@@ -188,14 +220,24 @@ impl<T: OutputModel> PrivateModel for Output<T> {
             panic!("action not found")
         };
 
+        let pad = "  ".repeat(action.depth);
         debug!(
-            "{}{}::{:?}",
-            " ".repeat(dispatcher.depth),
-            action.type_name.bright_green(),
-            unboxed_action
+            "→{} {}::{}\n\t\t {} {}",
+            pad,
+            action.type_name.bright_yellow(),
+            format!("{:?}", unboxed_action).bright_yellow(),
+            pad,
+            format!(
+                "from {}:{} ({}→{})",
+                action.dispatched_from_file,
+                action.dispatched_from_line,
+                action.caller,
+                action.action_id
+            )
+            .bright_black()
         );
-        dispatcher.depth += 1;
-
+        dispatcher.depth = action.depth;
+        dispatcher.caller = action.action_id;
         state.0.process_output(*unboxed_action, dispatcher)
     }
 }

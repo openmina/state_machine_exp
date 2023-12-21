@@ -34,19 +34,19 @@ impl EchoServerState {
             .insert(connection_uid, Connection { recv_uid: None })
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", connection_uid)
+            panic!("Attempt to re-use existing {:?}", connection_uid)
         }
     }
 
     pub fn remove_connection(&mut self, uid: &Uid) {
         self.connections.remove(uid).unwrap_or_else(|| {
-            panic!("Attempt to remove an inexistent Connection (uid {:?})", uid)
+            panic!("Attempt to remove an inexistent Connection {:?}", uid)
         });
     }
 
     pub fn get_connection_mut(&mut self, connection_uid: &Uid) -> &mut Connection {
         let Some(connection) = self.connections.get_mut(&connection_uid) else {
-            panic!("Connection object not found for Uid {:?}", connection_uid)
+            panic!("Connection object not found for {:?}", connection_uid)
         };
         connection
     }
@@ -70,7 +70,7 @@ impl EchoServerState {
                 None => false,
             })
         else {
-            panic!("Connection object not found for recv Uid {:?}", recv_uid)
+            panic!("Connection object not found for recv {:?}", recv_uid)
         };
 
         connection

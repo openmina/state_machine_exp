@@ -1,10 +1,10 @@
 use crate::{
     automaton::{
-        action::{CompletionRoutine, Dispatcher},
+        action::{ResultDispatch, Dispatcher},
         model::{InputModel, PureModel},
         state::{ModelState, State},
     },
-    models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction},
+    models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction}, dispatch,
 };
 
 use super::{action::TimePureAction, state::TimeState};
@@ -33,9 +33,9 @@ impl PureModel for TimeState {
         dispatcher: &mut Dispatcher,
     ) {
         assert!(matches!(action, TimePureAction::Tick));
-        dispatcher.dispatch(TimeOutputAction::GetSystemTime {
+        dispatch!(dispatcher, TimeOutputAction::GetSystemTime {
             uid: state.new_uid(),
-            on_result: CompletionRoutine::new(|(uid, result)| {
+            on_result: ResultDispatch::new(|(uid, result)| {
                 (TimeInputAction::TimeUpdate { uid, result }).into()
             }),
         })

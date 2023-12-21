@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, mem};
 
 use crate::{
     automaton::{
-        action::CompletionRoutine,
+        action::ResultDispatch,
         state::{Objects, Uid},
     },
     models::pure::tcp::{action::RecvResult, state::SendResult},
@@ -11,9 +11,9 @@ use crate::{
 pub struct Server {
     pub address: String,
     pub max_connections: usize,
-    pub on_new_connection: CompletionRoutine<(Uid, Uid)>,
-    pub on_close_connection: CompletionRoutine<(Uid, Uid)>,
-    pub on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_new_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_close_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
     pub connections: BTreeSet<Uid>,
 }
 
@@ -21,9 +21,9 @@ impl Server {
     pub fn new(
         address: String,
         max_connections: usize,
-        on_new_connection: CompletionRoutine<(Uid, Uid)>,
-        on_close_connection: CompletionRoutine<(Uid, Uid)>,
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
             address,
@@ -42,17 +42,17 @@ impl Server {
 
 pub struct SendRequest {
     pub connection_uid: Uid,
-    pub on_result: CompletionRoutine<(Uid, SendResult)>,
+    pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
 pub struct RecvRequest {
     pub connection_uid: Uid,
-    pub on_result: CompletionRoutine<(Uid, RecvResult)>,
+    pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
 pub struct PollRequest {
     pub timeout: Option<u64>,
-    pub on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
 }
 
 pub struct TcpServerState {
@@ -85,7 +85,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_result: CompletionRoutine<(Uid, SendResult)>,
+        on_result: ResultDispatch<(Uid, SendResult)>,
     ) {
         if self
             .send_requests
@@ -98,7 +98,7 @@ impl TcpServerState {
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
@@ -112,7 +112,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection_uid: Uid,
-        on_result: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests
@@ -125,7 +125,7 @@ impl TcpServerState {
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
@@ -160,9 +160,9 @@ impl TcpServerState {
         uid: Uid,
         address: String,
         max_connections: usize,
-        on_new_connection: CompletionRoutine<(Uid, Uid)>,
-        on_close_connection: CompletionRoutine<(Uid, Uid)>,
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) {
         if self
             .server_objects
@@ -178,25 +178,25 @@ impl TcpServerState {
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing uid {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", uid)
         }
     }
 
     pub fn get_server(&self, uid: &Uid) -> &Server {
         self.server_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("Server object (uid {:?}) not found", uid))
+            .unwrap_or_else(|| panic!("Server object {:?} not found", uid))
     }
 
     pub fn get_server_mut(&mut self, uid: &Uid) -> &mut Server {
         self.server_objects
             .get_mut(uid)
-            .unwrap_or_else(|| panic!("Server object (uid {:?}) not found", uid))
+            .unwrap_or_else(|| panic!("Server object {:?} not found", uid))
     }
 
     pub fn remove_server(&mut self, uid: &Uid) {
         self.server_objects
             .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent Server (uid {:?})", uid));
+            .unwrap_or_else(|| panic!("Attempt to remove an inexistent Server {:?}", uid));
     }
 }

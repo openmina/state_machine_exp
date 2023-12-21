@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     automaton::{
-        action::{Action, ActionKind, CompletionRoutine},
+        action::{Action, ActionKind, ResultDispatch},
         state::Uid,
     },
     models::effectful::mio::action::{PollEventsResult, TcpReadResult, TcpWriteResult},
@@ -51,47 +51,47 @@ pub enum ConnectResult {
 pub enum TcpPureAction {
     Init {
         init_uid: Uid, // TCP model instance
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Listen {
         uid: Uid,
         address: String,
-        on_result: CompletionRoutine<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Accept {
         uid: Uid,
         listener_uid: Uid,
-        on_result: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: ResultDispatch<(Uid, ConnectResult)>,
     },
     Connect {
         uid: Uid,
         address: String,
         timeout: Option<u64>, // timeout in milliseconds
-        on_result: CompletionRoutine<(Uid, ConnectResult)>,
+        on_result: ResultDispatch<(Uid, ConnectResult)>,
     },
     Close {
         connection_uid: Uid,
-        on_result: CompletionRoutine<Uid>,
+        on_result: ResultDispatch<Uid>,
     },
     Poll {
         uid: Uid,
         objects: Vec<Uid>,    // TCP objects we are intereted in
         timeout: Option<u64>, // timeout in milliseconds
-        on_result: CompletionRoutine<(Uid, PollResult)>,
+        on_result: ResultDispatch<(Uid, PollResult)>,
     },
     Send {
         uid: Uid,
         connection_uid: Uid,
         data: Rc<[u8]>,
         timeout: Option<u64>, // timeout in milliseconds
-        on_result: CompletionRoutine<(Uid, SendResult)>,
+        on_result: ResultDispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection_uid: Uid,
         count: usize,         // number of bytes to read
         timeout: Option<u64>, // timeout in milliseconds
-        on_result: CompletionRoutine<(Uid, RecvResult)>,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
     },
 }
 
