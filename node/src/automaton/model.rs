@@ -8,6 +8,26 @@ use super::{
     state::{ModelState, State},
 };
 
+// The following code enables polymorphic handling of different *model* types
+// and their actions in a state-machine setup. A *model* is defined in terms of
+// the type of actions it can process, and uses dynamic dispatch to call the
+// correct processing method.
+//
+// A model implements one of the `PureModel`, `InputModel`, and `OutputModel`
+// traits. Each trait defines a specific `Action` associated type, and a
+// corresponding processing method (`process_pure`, `process_input`, or
+// `process_output`).
+//
+// Models implementing the `PureModel`, `InputModel`, or `OutputModel` traits
+// are wrapped by the `Pure`, `Input`, and `Output` structs. These are used to
+// implement the `PrivateModel` trait that provides `into_vtable*` methods so
+// models can be converted into the `AnyModel` type.
+//
+// Finally, the `AnyModel` type is a central struct that can hold any model and
+// handles actions via its virtual method table. It provides the methods
+// (`process_pure`, `process_input`, `process_output`) to process different
+// kinds of actions.
+
 pub struct AnyModel<Substates: ModelState> {
     model: Box<dyn Any>,
     vtable: ModelVTable<Substates>,
@@ -136,7 +156,8 @@ impl<T: PureModel> PrivateModel for Pure<T> {
 
         let pad = "  ".repeat(action.depth);
         debug!(
-            "→{} {}::{:?}\n\t\t {} {}",
+            "{}: →{} {}::{:?}\n\t\t {} {}",
+            state.get_current_instance(),
             pad,
             action.type_name,
             unboxed_action,
@@ -177,7 +198,8 @@ impl<T: InputModel> PrivateModel for Input<T> {
 
         let pad = "  ".repeat(action.depth);
         debug!(
-            "←{} {}::{}\n\t\t {} {}",
+            "{}: ←{} {}::{}\n\t\t {} {}",
+            state.get_current_instance(),
             pad,
             action.type_name.bright_cyan(),
             format!("{:?}", unboxed_action).bright_cyan(),

@@ -3,35 +3,32 @@ use crate::{
         action::{Action, ActionKind},
         state::Uid,
     },
-    models::pure::tcp::action::{RecvResult, SendResult},
+    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
 
 #[derive(Debug)]
-pub struct EchoServerTickAction();
+pub struct EchoClientTickAction();
 
-impl Action for EchoServerTickAction {
+impl Action for EchoClientTickAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
 #[derive(Debug)]
-pub enum EchoServerInputAction {
+pub enum EchoClientInputAction {
     InitResult {
         instance: Uid,
         result: Result<(), String>,
     },
-    NewServerResult {
-        server: Uid,
-        result: Result<(), String>,
-    },
-    NewConnection {
+    ConnectResult {
         connection: Uid,
+        result: ConnectionResult,
     },
     Closed {
         connection: Uid,
     },
     PollResult {
         uid: Uid,
-        result: Result<(), String>,
+        result: TcpPollResult,
     },
     RecvResult {
         uid: Uid,
@@ -43,6 +40,6 @@ pub enum EchoServerInputAction {
     },
 }
 
-impl Action for EchoServerInputAction {
+impl Action for EchoClientInputAction {
     const KIND: ActionKind = ActionKind::Input;
 }

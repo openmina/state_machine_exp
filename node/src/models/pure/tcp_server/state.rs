@@ -1,15 +1,13 @@
-use std::{collections::BTreeSet, mem};
-
 use crate::{
     automaton::{
         action::ResultDispatch,
         state::{Objects, Uid},
     },
-    models::pure::tcp::{action::RecvResult, state::SendResult},
+    models::pure::tcp::action::{RecvResult, SendResult},
 };
+use std::{collections::BTreeSet, mem};
 
 pub struct Server {
-    pub address: String,
     pub max_connections: usize,
     pub on_new_connection: ResultDispatch<(Uid, Uid)>,
     pub on_close_connection: ResultDispatch<(Uid, Uid)>,
@@ -19,14 +17,12 @@ pub struct Server {
 
 impl Server {
     pub fn new(
-        address: String,
         max_connections: usize,
         on_new_connection: ResultDispatch<(Uid, Uid)>,
         on_close_connection: ResultDispatch<(Uid, Uid)>,
         on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
-            address,
             max_connections,
             on_new_connection,
             on_close_connection,
@@ -41,17 +37,16 @@ impl Server {
 }
 
 pub struct SendRequest {
-    pub connection_uid: Uid,
+    pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
 pub struct RecvRequest {
-    pub connection_uid: Uid,
+    pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
 pub struct PollRequest {
-    pub timeout: Option<u64>,
     pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
 }
 
@@ -78,13 +73,13 @@ impl TcpServerState {
     }
 
     pub fn take_poll_request(&mut self) -> PollRequest {
-        mem::take(&mut self.poll_request).expect("Take attempt on inexisting PollRequest")
+        mem::take(&mut self.poll_request).expect("Take attempt on inexistent PollRequest")
     }
 
     pub fn new_send_request(
         &mut self,
         uid: &Uid,
-        connection_uid: Uid,
+        connection: Uid,
         on_result: ResultDispatch<(Uid, SendResult)>,
     ) {
         if self
@@ -92,7 +87,7 @@ impl TcpServerState {
             .insert(
                 *uid,
                 SendRequest {
-                    connection_uid,
+                    connection,
                     on_result,
                 },
             )
@@ -105,13 +100,13 @@ impl TcpServerState {
     pub fn take_send_request(&mut self, uid: &Uid) -> SendRequest {
         self.send_requests
             .remove(uid)
-            .expect("Take attempt on inexisting SendRequest")
+            .expect(&format!("Take attempt on inexistent SendRequest {:?}", uid))
     }
 
     pub fn new_recv_request(
         &mut self,
         uid: &Uid,
-        connection_uid: Uid,
+        connection: Uid,
         on_result: ResultDispatch<(Uid, RecvResult)>,
     ) {
         if self
@@ -119,7 +114,7 @@ impl TcpServerState {
             .insert(
                 *uid,
                 RecvRequest {
-                    connection_uid,
+                    connection,
                     on_result,
                 },
             )
@@ -132,33 +127,25 @@ impl TcpServerState {
     pub fn take_recv_request(&mut self, uid: &Uid) -> RecvRequest {
         self.recv_requests
             .remove(uid)
-            .expect("Take attempt on inexisting SendRequest")
+            .expect(&format!("Take attempt on inexistent SendRequest {:?}", uid))
     }
 
-    pub fn new_connection(&mut self, connection_uid: Uid, listener_uid: Uid) {
-        self.get_server_mut(&listener_uid)
+    pub fn new_connection(&mut self, connection: Uid, listener: Uid) {
+        self.get_server_mut(&listener)
             .connections
-            .insert(connection_uid);
+            .insert(connection);
     }
 
-    // pub fn get_connection_server(&self, connection_uid: &Uid) -> (&Uid, &Server) {
-    //     self.server_objects
-    //         .iter()
-    //         .find(|(_, server)| server.connections.contains(connection_uid))
-    //         .expect("Server not found for connection")
-    // }
-
-    pub fn get_connection_server_mut(&mut self, connection_uid: &Uid) -> (&Uid, &mut Server) {
+    pub fn get_connection_server_mut(&mut self, connection: &Uid) -> (&Uid, &mut Server) {
         self.server_objects
             .iter_mut()
-            .find(|(_, server)| server.connections.contains(connection_uid))
-            .expect("Server not found for connection")
+            .find(|(_, server)| server.connections.contains(connection))
+            .expect(&format!("Server not found for connection {:?}", connection))
     }
 
     pub fn new_server(
         &mut self,
-        uid: Uid,
-        address: String,
+        server: Uid,
         max_connections: usize,
         on_new_connection: ResultDispatch<(Uid, Uid)>,
         on_close_connection: ResultDispatch<(Uid, Uid)>,
@@ -167,9 +154,8 @@ impl TcpServerState {
         if self
             .server_objects
             .insert(
-                uid,
+                server,
                 Server::new(
-                    address,
                     max_connections,
                     on_new_connection,
                     on_close_connection,
@@ -178,25 +164,26 @@ impl TcpServerState {
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", server)
         }
     }
 
-    pub fn get_server(&self, uid: &Uid) -> &Server {
+    pub fn get_server(&self, server: &Uid) -> &Server {
         self.server_objects
-            .get(uid)
-            .unwrap_or_else(|| panic!("Server object {:?} not found", uid))
+            .get(server)
+            .expect(&format!("Server object {:?} not found", server))
     }
 
-    pub fn get_server_mut(&mut self, uid: &Uid) -> &mut Server {
+    pub fn get_server_mut(&mut self, server: &Uid) -> &mut Server {
         self.server_objects
-            .get_mut(uid)
-            .unwrap_or_else(|| panic!("Server object {:?} not found", uid))
+            .get_mut(server)
+            .expect(&format!("Server object {:?} not found", server))
     }
 
-    pub fn remove_server(&mut self, uid: &Uid) {
-        self.server_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent Server {:?}", uid));
+    pub fn remove_server(&mut self, server: &Uid) {
+        self.server_objects.remove(server).expect(&format!(
+            "Attempt to remove an inexistent Server {:?}",
+            server
+        ));
     }
 }

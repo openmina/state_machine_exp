@@ -1,17 +1,23 @@
-use core::panic;
-use std::rc::Rc;
-
-use log::info;
-
+use super::action::{
+    ConnectionEvent, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult, TcpPollResult,
+};
 use crate::{
     automaton::{
-        action::ResultDispatch,
+        action::{ResultDispatch, Timeout, TimeoutAbsolute},
         state::{Objects, Uid},
     },
     models::effectful::mio::action::MioEvent,
 };
+use core::panic;
+//use log::info;
+use std::rc::Rc;
 
-use super::action::{ConnectResult, ConnectionEvent, Event, ListenerEvent, PollResult, RecvResult};
+pub trait EventUpdater {
+    type Event;
+    fn update_events(&mut self, uid: Uid, event: &MioEvent);
+    fn events(&self) -> &Self::Event;
+    fn events_mut(&mut self) -> &mut Self::Event;
+}
 
 #[derive(Debug)]
 pub struct Listener {
@@ -28,8 +34,12 @@ impl Listener {
             events: None,
         }
     }
+}
 
-    pub fn update_events(&mut self, event: &MioEvent) {
+impl EventUpdater for Listener {
+    type Event = ListenerEvent;
+
+    fn update_events(&mut self, _uid: Uid, event: &MioEvent) {
         let new_event = match event {
             MioEvent { error: true, .. } => ListenerEvent::Error,
             MioEvent {
@@ -40,56 +50,40 @@ impl Listener {
             _ => ListenerEvent::AcceptPending,
         };
 
-        if let Some(curr_event) = &mut self.events {
-            match curr_event {
-                ListenerEvent::Closed | ListenerEvent::Error => {
-                    info!(
-                        "|TCP| update_events (Listener): received new event {:?} but keeping current event {:?}",
-                        new_event, curr_event
-                    );
-                }
-                ListenerEvent::AcceptPending | ListenerEvent::ConnectionAccepted => {
-                    info!(
-                        "|TCP| update_events (Listener): {:?} updated to {:?}",
-                        curr_event, new_event
-                    );
-                    *curr_event = new_event
-                }
-            }
-        } else {
-            self.events = Some(new_event);
-        }
+        self.events = self
+            .events
+            .take()
+            .map_or(Some(new_event.clone()), |curr_event| match curr_event {
+                ListenerEvent::Closed | ListenerEvent::Error => Some(curr_event),
+                ListenerEvent::AcceptPending | ListenerEvent::AllAccepted => Some(new_event),
+            });
     }
 
-    pub fn events(&self) -> &ListenerEvent {
-        if let Some(event) = self.events.as_ref() {
-            event
-        } else {
-            panic!("Attempt to fetch events but not initialized yet")
-        }
+    fn events(&self) -> &ListenerEvent {
+        self.events
+            .as_ref()
+            .expect("Attempt to fetch events but not initialized yet")
     }
 
-    pub fn events_mut(&mut self) -> &mut ListenerEvent {
-        if let Some(event) = self.events.as_mut() {
-            event
-        } else {
-            panic!("Attempt to fetch events but not initialized yet")
-        }
+    fn events_mut(&mut self) -> &mut ListenerEvent {
+        self.events
+            .as_mut()
+            .expect("Attempt to fetch events but not initialized yet")
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct PollRequest {
     pub objects: Vec<Uid>,
-    pub timeout: Option<u64>,
-    pub on_result: ResultDispatch<(Uid, PollResult)>,
+    pub timeout: Timeout,
+    pub on_result: ResultDispatch<(Uid, TcpPollResult)>,
 }
 
 impl PollRequest {
     pub fn new(
         objects: Vec<Uid>,
-        timeout: Option<u64>,
-        on_result: ResultDispatch<(Uid, PollResult)>,
+        timeout: Timeout,
+        on_result: ResultDispatch<(Uid, TcpPollResult)>,
     ) -> Self {
         Self {
             objects,
@@ -100,8 +94,8 @@ impl PollRequest {
 }
 
 #[derive(Debug)]
-pub enum ConnectionType {
-    Incoming(Uid), // Listener Uid
+pub enum ConnectionDirection {
+    Incoming { tcp_listener: Uid },
     Outgoing,
 }
 
@@ -110,39 +104,45 @@ pub enum ConnectionStatus {
     Pending,
     PendingCheck,
     Established,
-    CloseRequest(Option<ResultDispatch<Uid>>),
+    CloseRequest {
+        maybe_on_result: Option<ResultDispatch<Uid>>,
+    },
 }
 
 #[derive(Debug)]
 pub struct Connection {
     pub status: ConnectionStatus,
-    pub conn_type: ConnectionType,
-    pub timeout: Option<u128>,
-    pub on_result: ResultDispatch<(Uid, ConnectResult)>,
+    pub direction: ConnectionDirection,
+    pub timeout: TimeoutAbsolute,
+    pub on_result: ResultDispatch<(Uid, ConnectionResult)>,
     pub events: Option<ConnectionEvent>,
 }
 
 impl Connection {
     pub fn new(
-        conn_type: ConnectionType,
-        timeout: Option<u128>,
-        on_result: ResultDispatch<(Uid, ConnectResult)>,
+        direction: ConnectionDirection,
+        timeout: TimeoutAbsolute,
+        on_result: ResultDispatch<(Uid, ConnectionResult)>,
     ) -> Self {
-        let status = match conn_type {
-            ConnectionType::Outgoing => ConnectionStatus::Pending,
-            ConnectionType::Incoming(..) => ConnectionStatus::Established,
+        let status = match direction {
+            ConnectionDirection::Outgoing => ConnectionStatus::Pending,
+            ConnectionDirection::Incoming { .. } => ConnectionStatus::Established,
         };
 
         Self {
             status,
-            conn_type,
+            direction,
             timeout,
             on_result,
             events: None,
         }
     }
+}
 
-    pub fn update_events(&mut self, event: &MioEvent) {
+impl EventUpdater for Connection {
+    type Event = ConnectionEvent;
+
+    fn update_events(&mut self, _uid: Uid, event: &MioEvent) {
         let new_event = match event {
             MioEvent { error: true, .. } => ConnectionEvent::Error,
             MioEvent {
@@ -153,103 +153,65 @@ impl Connection {
             MioEvent {
                 readable, writable, ..
             } => ConnectionEvent::Ready {
-                recv: *readable,
-                send: *writable,
+                can_recv: *readable,
+                can_send: *writable,
             },
         };
 
-        if let Some(curr_event) = &mut self.events {
-            match curr_event {
-                ConnectionEvent::Closed | ConnectionEvent::Error => {
-                    info!(
-                        "|TCP| update_events (Connection): received new event {:?} but keeping current event {:?}",
-                        new_event, curr_event
-                    );
-                }
+        self.events = self
+            .events
+            .take()
+            .map_or(Some(new_event.clone()), |curr_event| match curr_event {
+                ConnectionEvent::Closed | ConnectionEvent::Error => Some(curr_event),
                 ConnectionEvent::Ready {
-                    recv: curr_recv,
-                    send: curr_send,
-                } => {
-                    if let ConnectionEvent::Ready { recv, send } = new_event {
-                        info!(
-                            "|TCP| update_events (Connection): recv {:?}->{:?} send {:?}->{:?}",
-                            curr_recv, recv, curr_send, send
-                        );
-
-                        *curr_recv |= recv;
-                        *curr_send |= send;
-                    } else {
-                        info!(
-                            "|TCP| update_events (Connection): {:?} updated to {:?}",
-                            curr_event, new_event
-                        );
-
-                        *curr_event = new_event
+                    can_recv: curr_recv,
+                    can_send: curr_send,
+                } => match new_event {
+                    ConnectionEvent::Ready { can_recv, can_send } => {
+                        let updated_event = ConnectionEvent::Ready {
+                            can_recv: curr_recv | can_recv,
+                            can_send: curr_send | can_send,
+                        };
+                        Some(updated_event)
                     }
-                }
-            }
-        } else {
-            info!(
-                "|TCP| update_events (Connection): first event {:?}",
-                new_event
-            );
-
-            self.events = Some(new_event);
-        }
-
-        // MIO's connect implementation is non-blocking, so we must check if the
-        // connection was established correctly after we receive a `writable` event.
-        if matches!(self.conn_type, ConnectionType::Outgoing)
-            && matches!(self.status, ConnectionStatus::Pending)
-            && matches!(self.events, Some(ConnectionEvent::Ready { send: true, .. }))
-        {
-            self.status = ConnectionStatus::PendingCheck;
-        }
+                    _ => Some(new_event),
+                },
+            });
     }
 
-    pub fn events(&self) -> &ConnectionEvent {
-        if let Some(event) = self.events.as_ref() {
-            event
-        } else {
-            panic!("Attempt to fetch events but not initialized yet")
-        }
+    fn events(&self) -> &ConnectionEvent {
+        self.events
+            .as_ref()
+            .expect("Attempt to fetch events but not initialized yet")
     }
 
-    pub fn events_mut(&mut self) -> &mut ConnectionEvent {
-        if let Some(event) = self.events.as_mut() {
-            event
-        } else {
-            panic!("Attempt to fetch events but not initialized yet")
-        }
+    fn events_mut(&mut self) -> &mut ConnectionEvent {
+        self.events
+            .as_mut()
+            .expect("Attempt to fetch events but not initialized yet")
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum SendResult {
-    Success,
-    Timeout,
-    Error(String),
-}
 #[derive(Debug)]
 pub struct SendRequest {
-    pub connection_uid: Uid,
+    pub connection: Uid,
     pub data: Rc<[u8]>,
     pub bytes_sent: usize,
     pub send_on_poll: bool,
-    pub timeout: Option<u128>,
+    pub timeout: TimeoutAbsolute,
     pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
 impl SendRequest {
     pub fn new(
-        connection_uid: Uid,
+        connection: Uid,
         data: Rc<[u8]>,
         send_on_poll: bool,
-        timeout: Option<u128>,
+        timeout: TimeoutAbsolute,
         on_result: ResultDispatch<(Uid, SendResult)>,
     ) -> Self {
         Self {
-            connection_uid,
+            connection,
             data,
             bytes_sent: 0,
             send_on_poll,
@@ -261,24 +223,24 @@ impl SendRequest {
 
 #[derive(Debug)]
 pub struct RecvRequest {
-    pub connection_uid: Uid,
+    pub connection: Uid,
     pub data: Vec<u8>,
     pub bytes_received: usize,
     pub recv_on_poll: bool,
-    pub timeout: Option<u128>,
+    pub timeout: TimeoutAbsolute,
     pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
 impl RecvRequest {
     pub fn new(
-        connection_uid: Uid,
+        connection: Uid,
         count: usize,
         recv_on_poll: bool,
-        timeout: Option<u128>,
+        timeout: TimeoutAbsolute,
         on_result: ResultDispatch<(Uid, RecvResult)>,
     ) -> Self {
         Self {
-            connection_uid,
+            connection,
             data: vec![0; count],
             bytes_received: 0,
             recv_on_poll,
@@ -292,23 +254,23 @@ impl RecvRequest {
 pub enum Status {
     New,
     InitError {
-        init_uid: Uid,
+        instance: Uid,
     },
     InitPollCreate {
-        init_uid: Uid,
-        poll_uid: Uid,
+        instance: Uid,
+        poll: Uid,
         on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     InitEventsCreate {
-        init_uid: Uid,
-        poll_uid: Uid,
-        events_uid: Uid,
+        instance: Uid,
+        poll: Uid,
+        events: Uid,
         on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Ready {
-        init_uid: Uid,
-        poll_uid: Uid,
-        events_uid: Uid,
+        instance: Uid,
+        poll: Uid,
+        events: Uid,
     },
 }
 
@@ -356,8 +318,8 @@ impl TcpState {
         &mut self,
         uid: Uid,
         objects: Vec<Uid>,
-        timeout: Option<u64>,
-        on_result: ResultDispatch<(Uid, PollResult)>,
+        timeout: Timeout,
+        on_result: ResultDispatch<(Uid, TcpPollResult)>,
     ) {
         assert!(objects
             .iter()
@@ -375,17 +337,17 @@ impl TcpState {
 
     pub fn new_connection(
         &mut self,
-        uid: Uid,
-        conn_type: ConnectionType,
-        timeout: Option<u128>,
-        on_result: ResultDispatch<(Uid, ConnectResult)>,
+        connection: Uid,
+        direction: ConnectionDirection,
+        timeout: TimeoutAbsolute,
+        on_result: ResultDispatch<(Uid, ConnectionResult)>,
     ) {
         if self
             .connection_objects
-            .insert(uid, Connection::new(conn_type, timeout, on_result))
+            .insert(connection, Connection::new(direction, timeout, on_result))
             .is_some()
         {
-            panic!("Attempt to re-use existing {:?}", uid)
+            panic!("Attempt to re-use existing {:?}", connection)
         }
     }
 
@@ -396,17 +358,17 @@ impl TcpState {
     pub fn new_send_request(
         &mut self,
         uid: Uid,
-        connection_uid: Uid,
+        connection: Uid,
         data: Rc<[u8]>,
         send_on_poll: bool,
-        timeout: Option<u128>,
+        timeout: TimeoutAbsolute,
         on_result: ResultDispatch<(Uid, SendResult)>,
     ) {
         if self
             .send_request_objects
             .insert(
                 uid,
-                SendRequest::new(connection_uid, data, send_on_poll, timeout, on_result),
+                SendRequest::new(connection, data, send_on_poll, timeout, on_result),
             )
             .is_some()
         {
@@ -417,17 +379,17 @@ impl TcpState {
     pub fn new_recv_request(
         &mut self,
         uid: Uid,
-        connection_uid: Uid,
+        connection: Uid,
         count: usize,
         recv_on_poll: bool,
-        timeout: Option<u128>,
+        timeout: TimeoutAbsolute,
         on_result: ResultDispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_request_objects
             .insert(
                 uid,
-                RecvRequest::new(connection_uid, count, recv_on_poll, timeout, on_result),
+                RecvRequest::new(connection, count, recv_on_poll, timeout, on_result),
             )
             .is_some()
         {
@@ -438,69 +400,72 @@ impl TcpState {
     pub fn get_listener(&self, uid: &Uid) -> &Listener {
         self.listener_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("Listener object {:?} not found", uid))
+            .expect(&format!("Listener object {:?} not found", uid))
     }
 
     pub fn get_listener_mut(&mut self, uid: &Uid) -> &mut Listener {
         self.listener_objects
             .get_mut(uid)
-            .unwrap_or_else(|| panic!("Listener object {:?} not found", uid))
+            .expect(&format!("Listener object {:?} not found", uid))
     }
 
     pub fn remove_listener(&mut self, uid: &Uid) {
-        self.listener_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent Listener {:?}", uid));
+        self.listener_objects.remove(uid).expect(&format!(
+            "Attempt to remove an inexistent Listener {:?}",
+            uid
+        ));
     }
 
     pub fn get_connection(&self, uid: &Uid) -> &Connection {
         self.connection_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("Connection object {:?} not found", uid))
+            .expect(&format!("Connection object {:?} not found", uid))
     }
 
     pub fn get_connection_mut(&mut self, uid: &Uid) -> &mut Connection {
         self.connection_objects
             .get_mut(uid)
-            .unwrap_or_else(|| panic!("Connection object {:?} not found", uid))
+            .expect(&format!("Connection object {:?} not found", uid))
     }
 
     pub fn remove_connection(&mut self, uid: &Uid) {
-        info!("|TCP| removing connection {:?}", uid);
-        
+        //info!("|TCP| removing connection {:?}", uid);
+
         self.recv_request_objects
-            .retain(|_, req| req.connection_uid != *uid);
+            .retain(|_, req| req.connection != *uid);
 
         self.send_request_objects
-            .retain(|_, req| req.connection_uid != *uid);
+            .retain(|_, req| req.connection != *uid);
 
-        self.connection_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent Connection {:?}", uid));
+        self.connection_objects.remove(uid).expect(&format!(
+            "Attempt to remove an inexistent Connection {:?}",
+            uid
+        ));
     }
 
     pub fn get_poll_request(&self, uid: &Uid) -> &PollRequest {
         self.poll_request_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("PollRequest object {:?} not found", uid))
+            .expect(&format!("PollRequest object {:?} not found", uid))
     }
 
     pub fn remove_poll_request(&mut self, uid: &Uid) {
-        self.poll_request_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent PollRequest {:?}", uid));
+        self.poll_request_objects.remove(uid).expect(&format!(
+            "Attempt to remove an inexistent PollRequest {:?}",
+            uid
+        ));
     }
 
     pub fn get_send_request(&self, uid: &Uid) -> &SendRequest {
         self.send_request_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("SendRequest object {:?} not found", uid))
+            .expect(&format!("SendRequest object {:?} not found", uid))
     }
 
     pub fn get_send_request_mut(&mut self, uid: &Uid) -> &mut SendRequest {
         self.send_request_objects
             .get_mut(uid)
-            .unwrap_or_else(|| panic!("SendRequest object {:?} not found", uid))
+            .expect(&format!("SendRequest object {:?} not found", uid))
     }
 
     pub fn pending_send_requests(&self) -> Vec<(&Uid, &SendRequest)> {
@@ -511,21 +476,22 @@ impl TcpState {
     }
 
     pub fn remove_send_request(&mut self, uid: &Uid) {
-        self.send_request_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent SendRequest {:?}", uid));
+        self.send_request_objects.remove(uid).expect(&format!(
+            "Attempt to remove an inexistent SendRequest {:?}",
+            uid
+        ));
     }
 
     pub fn get_recv_request(&self, uid: &Uid) -> &RecvRequest {
         self.recv_request_objects
             .get(uid)
-            .unwrap_or_else(|| panic!("RecvRequest object {:?} not found", uid))
+            .expect(&format!("RecvRequest object {:?} not found", uid))
     }
 
     pub fn get_recv_request_mut(&mut self, uid: &Uid) -> &mut RecvRequest {
         self.recv_request_objects
             .get_mut(uid)
-            .unwrap_or_else(|| panic!("RecvRequest object {:?} not found", uid))
+            .expect(&format!("RecvRequest object {:?} not found", uid))
     }
 
     pub fn pending_recv_requests(&self) -> Vec<(&Uid, &RecvRequest)> {
@@ -536,19 +502,10 @@ impl TcpState {
     }
 
     pub fn remove_recv_request(&mut self, uid: &Uid) {
-        self.recv_request_objects
-            .remove(uid)
-            .unwrap_or_else(|| panic!("Attempt to remove an inexistent RecvRequest {:?}", uid));
-    }
-
-    pub fn pending_connections(&self) -> Vec<(&Uid, &Connection)> {
-        self.connection_objects
-            .iter()
-            .filter(|(_, conn)| match conn.status {
-                ConnectionStatus::Pending | ConnectionStatus::PendingCheck => true,
-                _ => false,
-            })
-            .collect()
+        self.recv_request_objects.remove(uid).expect(&format!(
+            "Attempt to remove an inexistent RecvRequest {:?}",
+            uid
+        ));
     }
 
     pub fn pending_connections_mut(&mut self) -> Vec<(&Uid, &mut Connection)> {
@@ -581,9 +538,9 @@ impl TcpState {
         let uid = event.token;
 
         if let Some(listener) = self.listener_objects.get_mut(&uid) {
-            listener.update_events(event)
+            listener.update_events(uid, event)
         } else if let Some(connection) = self.connection_objects.get_mut(&uid) {
-            connection.update_events(event)
+            connection.update_events(uid, event)
         } else {
             panic!("Received event for unknown object {:?}", uid)
         }

@@ -4,42 +4,46 @@ use std::{
     fmt,
 };
 
-use colored::Colorize;
-use log::debug;
+#[derive(Clone, Debug)]
+pub enum Timeout {
+    Millis(u64),
+    Never,
+}
 
-// Actions can fall into 3 categories:
+#[derive(Clone, Debug)]
+pub enum TimeoutAbsolute {
+    Millis(u128),
+    Never,
+}
+
+// Actions fall into 3 categories:
 //
 // 1. `Pure`: these are both dispatched and processed by `PureModel`s.
-//    They can change the state-machine state but they don't cause any other side effects.
-//    We don't record/replay them since they can be re-generated deterministically.
+//    They can change the state-machine state but they don't cause any other
+//    side-effects. We don't need to record/replay them since they can be
+//    re-generated deterministically.
 //
-// 2. `Input`: similarly to `Pure` actions, they can change the state-machine state but
-//    they don't cause any other side effects.
-//    They are dispatched with `completion_dispatch` either from:
+// 2. `Input`: these can change the state-machine state but they don't cause
+//    side-effects. They are dispatched by `dispatch_back` and contain the
+//    result (`ResultDispatch`) of the processing of an action.
+//    If the processed action was an `Output` action, the resulting `Input`
+//    action brings information from the "external world" to the state-machine.
 //
-//      - An `OutputModel`: to bring information from the "external world" to the
-//        state-machine (in response to some IO operation).
+//    `Input` actions must be recorded: in theory, we only need to record the
+//    input actions dispatched by `OutputModel`s, however to deterministically
+//    reproduce `Input` actions dispatched from other sources, it should be
+//    required that `ResultDispatch` can be serialised and deserialized.
+//    `ResultDispatch` provides a mechanism where the callee (the dispatcher
+//    of an action) can convert the action's result into an `Input` action
+//    that gets dispatched (`dispatch_back`) to the caller. To do so, the
+//    caller includes in the action a pointer to a caller-defined function that
+//    performs this "result to `Input` action" conversion. To avoid the extra
+//    complexity of serializing/deserializing function pointers we skip them,
+//    instead we record/replay *all* `Input` actions.
 //
-//      - An `InputModel`: to further propagate the input to the `CompletionRoutine` of
-//        a caller model.
-//
-//    These must be recorded:
-//      Note that in theory, we only need to record the first input action (dispatched by
-//      the `OutputModel`) of a chain of `Input` actions. However, to reproduce the rest
-//      of them (the ones dispatched by `InputModel`s) deterministically, it is required
-//      that the `CompletionRoutine` type can be serialised/deserialized.
-//
-//      The purpose of the `CompletionRoutine` is to provide a mechanism so the callee
-//      can convert the result of an operation into an action that gets dispatched to the
-//      caller. To do so, the caller assigns the `CompletionRoutine` to pointer to a
-//      caller-defined function that performs this result->action conversion.
-//
-//      To avoid the extra complexity of serializing/deserializing caller-defined function
-//      pointers, we just skip them and instead we record/replay *all* `Input` actions.
-//
-// 3. `Output`: these are processed by `OutputModel`s performing IO to the "external world".
-//    They don't have access to the state-machine state but they access state that is
-//    specific to the `OutputModel`.
+// 3. `Output`: these are handled by `OutputModel`s to communicate to the
+//    "external world". `OutputModel`s don't have access to the state-machine
+//    state, but they have their own (minimal) state.
 //
 #[derive(Debug)]
 pub enum ActionKind {
@@ -66,7 +70,8 @@ pub struct AnyAction {
     pub dispatched_from_line: u32,
     pub depth: usize,
     pub action_id: u64,
-    pub caller: u64, // action id of caller action
+    // action id of caller action
+    pub caller: u64,
 }
 
 impl<T: Action> From<T> for AnyAction {
@@ -82,7 +87,7 @@ impl<T: Action> From<T> for AnyAction {
             dispatched_from_line: 0,
             depth: 0,
             action_id: 0,
-            caller: 0
+            caller: 0,
         }
     }
 }
@@ -108,11 +113,24 @@ impl<R: Clone> fmt::Debug for ResultDispatch<R> {
 
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
+    // This is a caller-defined function that produces and dispatches an action
+    // when the action queue is empty. To the state-mache, the "tick" action is
+    // analogous to the clock-cycle of a CPU.
     tick: fn() -> AnyAction,
-    // for debugging purposes
+
+    // The following fields are for debugging purposes:
+
+    // The nesting level into the action chain: if action `A` has `depth=1` and
+    // its handler dispatches `B`,then `B` has `depth=2`.
     pub depth: usize,
+
+    // Every dispatched action has an unique `action_id` for the lifetime of
+    // the state-machine. In combination with an action's `caller` we can
+    // reconstruct the flow graph of all actions.
     pub action_id: u64,
-    pub caller: u64, // action id of the action being processed when the new action was dispatched
+    // The action's `caller` is the `action_id` of the action that was being
+    // handled at the moment the current action was dispatched.
+    pub caller: u64,
 }
 
 impl Dispatcher {
@@ -122,7 +140,7 @@ impl Dispatcher {
             tick,
             depth: 0,
             action_id: 0,
-            caller: 0
+            caller: 0,
         }
     }
 
@@ -177,6 +195,11 @@ impl Dispatcher {
         self.queue.push_back(any_action);
     }
 }
+
+// The following macros are wrappers to the `dispatch` and `dispatch_back`
+// methods so we can include into every action the source code file and
+// line number where the action was dispatched. Their purpose is just to
+// aid with debugging.
 
 #[macro_export]
 macro_rules! dispatch {

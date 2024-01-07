@@ -11,3 +11,5 @@ rand = {version = "0.8.5", features = ["small_rng"]}
 log = "0.4.20"
 env_logger = "0.10.1"
 colored = "2.1.0"
+model_state_derive = { path = "model_state_derive" }
+

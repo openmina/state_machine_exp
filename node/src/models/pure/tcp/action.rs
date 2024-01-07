@@ -1,96 +1,56 @@
-use std::rc::Rc;
-
 use crate::{
     automaton::{
-        action::{Action, ActionKind, ResultDispatch},
+        action::{Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
-    models::effectful::mio::action::{PollEventsResult, TcpReadResult, TcpWriteResult},
+    models::effectful::mio::action::{PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
 };
-
-use super::state::SendResult;
-
-#[derive(Clone, Debug)]
-pub enum ListenerEvent {
-    AcceptPending,
-    ConnectionAccepted, // set by us when handling Accept action
-    Closed,
-    Error,
-}
-
-#[derive(Clone, Debug)]
-pub enum ConnectionEvent {
-    Ready { recv: bool, send: bool },
-    Closed,
-    Error,
-}
-
-#[derive(Clone, Debug)]
-pub enum Event {
-    Listener(ListenerEvent),
-    Connection(ConnectionEvent),
-}
-
-pub type PollResult = Result<Vec<(Uid, Event)>, String>;
-
-#[derive(Clone, Debug)]
-pub enum RecvResult {
-    Success(Vec<u8>),
-    Timeout(Vec<u8>),
-    Error(String),
-}
-
-#[derive(Clone, Debug)]
-pub enum ConnectResult {
-    Success,
-    Timeout,
-    Error(String),
-}
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub enum TcpPureAction {
     Init {
-        init_uid: Uid, // TCP model instance
+        instance: Uid,
         on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Listen {
-        uid: Uid,
+        tcp_listener: Uid,
         address: String,
         on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     Accept {
-        uid: Uid,
-        listener_uid: Uid,
-        on_result: ResultDispatch<(Uid, ConnectResult)>,
+        connection: Uid,
+        tcp_listener: Uid,
+        on_result: ResultDispatch<(Uid, ConnectionResult)>,
     },
     Connect {
-        uid: Uid,
+        connection: Uid,
         address: String,
-        timeout: Option<u64>, // timeout in milliseconds
-        on_result: ResultDispatch<(Uid, ConnectResult)>,
+        timeout: Timeout,
+        on_result: ResultDispatch<(Uid, ConnectionResult)>,
     },
     Close {
-        connection_uid: Uid,
+        connection: Uid,
         on_result: ResultDispatch<Uid>,
     },
     Poll {
         uid: Uid,
-        objects: Vec<Uid>,    // TCP objects we are intereted in
-        timeout: Option<u64>, // timeout in milliseconds
-        on_result: ResultDispatch<(Uid, PollResult)>,
+        objects: Vec<Uid>,
+        timeout: Timeout,
+        on_result: ResultDispatch<(Uid, TcpPollResult)>,
     },
     Send {
         uid: Uid,
-        connection_uid: Uid,
+        connection: Uid,
         data: Rc<[u8]>,
-        timeout: Option<u64>, // timeout in milliseconds
+        timeout: Timeout,
         on_result: ResultDispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
-        connection_uid: Uid,
-        count: usize,         // number of bytes to read
-        timeout: Option<u64>, // timeout in milliseconds
+        connection: Uid,
+        count: usize,
+        timeout: Timeout,
         on_result: ResultDispatch<(Uid, RecvResult)>,
     },
 }
@@ -101,56 +61,115 @@ impl Action for TcpPureAction {
 
 #[derive(Debug)]
 pub enum TcpInputAction {
-    PollCreate {
-        uid: Uid,
-        success: bool,
-    },
-    EventsCreate(Uid),
-    Listen {
-        uid: Uid,
+    PollCreateResult {
+        poll: Uid,
         result: Result<(), String>,
     },
-    Accept {
+    EventsCreateResult {
         uid: Uid,
+    },
+    ListenResult {
+        tcp_listener: Uid,
         result: Result<(), String>,
     },
-    Connect {
-        uid: Uid,
+    AcceptResult {
+        connection: Uid,
+        result: TcpAcceptResult,
+    },
+    ConnectResult {
+        connection: Uid,
         result: Result<(), String>,
     },
-    CloseConnection {
-        uid: Uid,
+    CloseResult {
+        connection: Uid,
     },
-    RegisterConnection {
-        uid: Uid,
-        result: bool,
+    RegisterConnectionResult {
+        connection: Uid,
+        result: Result<(), String>,
     },
-    DeregisterConnection {
-        uid: Uid,
-        result: bool,
+    DeregisterConnectionResult {
+        connection: Uid,
+        result: Result<(), String>,
     },
-    RegisterListener {
-        uid: Uid,
-        result: bool,
+    RegisterListenerResult {
+        tcp_listener: Uid,
+        result: Result<(), String>,
     },
-    Poll {
+    PollResult {
         uid: Uid,
-        result: PollEventsResult,
+        result: PollResult,
     },
-    Send {
+    SendResult {
         uid: Uid,
         result: TcpWriteResult,
     },
-    Recv {
+    RecvResult {
         uid: Uid,
         result: TcpReadResult,
     },
-    PeerAddress {
-        uid: Uid,
+    PeerAddressResult {
+        connection: Uid,
         result: Result<String, String>,
     },
 }
 
 impl Action for TcpInputAction {
     const KIND: ActionKind = ActionKind::Input;
+}
+
+#[derive(Clone, Debug)]
+pub enum ListenerEvent {
+    AcceptPending,
+    AllAccepted,
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConnectionEvent {
+    Ready { can_recv: bool, can_send: bool },
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub enum Event {
+    Listener(ListenerEvent),
+    Connection(ConnectionEvent),
+}
+
+pub type TcpPollResult = Result<Vec<(Uid, Event)>, String>;
+
+#[derive(Clone, Debug)]
+pub enum RecvResult {
+    Success(Vec<u8>),
+    Timeout(Vec<u8>),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum SendResult {
+    Success,
+    Timeout,
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum ConnectResult {
+    Success,
+    Timeout,
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum AcceptResult {
+    Success,
+    WouldBlock,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectionResult {
+    Incoming(AcceptResult),
+    Outgoing(ConnectResult),
 }

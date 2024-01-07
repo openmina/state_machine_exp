@@ -7,7 +7,7 @@ use crate::automaton::{
 
 #[derive(Debug)]
 pub enum TimePureAction {
-    Tick,
+    UpdateCurrentTime,
 }
 
 impl Action for TimePureAction {
@@ -16,7 +16,7 @@ impl Action for TimePureAction {
 
 #[derive(Debug)]
 pub enum TimeInputAction {
-    TimeUpdate { uid: Uid, result: Duration },
+    GetSystemTimeResult { uid: Uid, result: Duration },
 }
 
 impl Action for TimeInputAction {

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     automaton::{
         action::{Action, ActionKind, ResultDispatch, Timeout},
@@ -5,22 +7,20 @@ use crate::{
     },
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
-use std::rc::Rc;
 
 #[derive(Debug)]
-pub enum TcpServerPureAction {
-    New {
+pub enum TcpClientPureAction {
+    Connect {
+        connection: Uid,
         address: String,
-        server: Uid,
-        max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
-        on_close_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        timeout: Timeout,
+        on_close_connection: ResultDispatch<Uid>,
+        on_result: ResultDispatch<(Uid, ConnectionResult)>,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch<(Uid, TcpPollResult)>,
     },
     Close {
         connection: Uid,
@@ -41,27 +41,20 @@ pub enum TcpServerPureAction {
     },
 }
 
-impl Action for TcpServerPureAction {
+impl Action for TcpClientPureAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
 
 #[derive(Debug)]
-pub enum TcpServerInputAction {
-    NewResult {
-        server: Uid,
-        result: Result<(), String>,
-    },
-    PollResult {
-        uid: Uid,
-        result: TcpPollResult,
-    },
-    AcceptResult {
+pub enum TcpClientInputAction {
+    ConnectResult {
         connection: Uid,
         result: ConnectionResult,
     },
-    CloseInternalResult {
-        connection: Uid,
-    },
+    // PollResult {
+    //     uid: Uid,
+    //     result: TcpPollResult,
+    // },
     CloseResult {
         connection: Uid,
     },
@@ -75,6 +68,6 @@ pub enum TcpServerInputAction {
     },
 }
 
-impl Action for TcpServerInputAction {
+impl Action for TcpClientInputAction {
     const KIND: ActionKind = ActionKind::Input;
 }
