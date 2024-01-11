@@ -1,13 +1,16 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind, ResultDispatch, Timeout},
+        action::{self, Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
     models::effectful::mio::action::{PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
 };
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
+use type_uuid::TypeUuid;
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "2fbd467c-1fb0-4190-89e1-7a0e756f63a4"]
 pub enum TcpPureAction {
     Init {
         instance: Uid,
@@ -42,6 +45,10 @@ pub enum TcpPureAction {
     Send {
         uid: Uid,
         connection: Uid,
+        #[serde(
+            serialize_with = "action::serialize_rc_bytes",
+            deserialize_with = "action::deserialize_rc_bytes"
+        )]
         data: Rc<[u8]>,
         timeout: Timeout,
         on_result: ResultDispatch<(Uid, SendResult)>,
@@ -55,11 +62,15 @@ pub enum TcpPureAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for TcpPureAction {
-    const KIND: ActionKind = ActionKind::Pure;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Pure
+    }
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "d37b48ca-42a6-4029-84e8-5ef6486cda6d"]
 pub enum TcpInputAction {
     PollCreateResult {
         poll: Uid,
@@ -113,11 +124,14 @@ pub enum TcpInputAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for TcpInputAction {
-    const KIND: ActionKind = ActionKind::Input;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Input
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ListenerEvent {
     AcceptPending,
     AllAccepted,
@@ -125,14 +139,14 @@ pub enum ListenerEvent {
     Error,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConnectionEvent {
     Ready { can_recv: bool, can_send: bool },
     Closed,
     Error,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Event {
     Listener(ListenerEvent),
     Connection(ConnectionEvent),
@@ -140,35 +154,35 @@ pub enum Event {
 
 pub type TcpPollResult = Result<Vec<(Uid, Event)>, String>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum RecvResult {
     Success(Vec<u8>),
     Timeout(Vec<u8>),
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum SendResult {
     Success,
     Timeout,
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConnectResult {
     Success,
     Timeout,
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum AcceptResult {
     Success,
     WouldBlock,
     Error(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConnectionResult {
     Incoming(AcceptResult),
     Outgoing(ConnectResult),

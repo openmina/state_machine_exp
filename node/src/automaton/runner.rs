@@ -1,12 +1,12 @@
-use std::io::Write;
-
-use std::{any::TypeId, collections::BTreeMap};
-
 use super::{
-    action::{ActionKind, AnyAction, Dispatcher},
+    action::{ActionKind, AnyAction, Dispatcher, SerializedResultDispatch},
     model::{AnyModel, Input, InputModel, Output, OutputModel, PrivateModel, Pure, PureModel},
     state::{ModelState, State},
 };
+use bincode::deserialize_from;
+use std::collections::BTreeMap;
+use std::{env, io::Write};
+use type_uuid::TypeUuid;
 
 // This struct holds the registered models, the state-machine state, and one
 // or more dispatchers. Usually, we need only one `Dispatcher`, except for
@@ -15,7 +15,7 @@ use super::{
 // running multiple nodes interacting with each other, all this inside the same
 // state-machine.
 pub struct Runner<Substate: ModelState> {
-    models: BTreeMap<TypeId, AnyModel<Substate>>,
+    models: BTreeMap<type_uuid::Bytes, AnyModel<Substate>>,
     state: State<Substate>,
     dispatchers: Vec<Dispatcher>,
 }
@@ -31,7 +31,7 @@ pub trait RegisterModel {
 // This allows us to dynamically construct state-machine configurations at the
 // time of creating the Runner instance. Models remain immutable thereafter.
 pub struct RunnerBuilder<Substate: ModelState> {
-    models: BTreeMap<TypeId, AnyModel<Substate>>,
+    models: BTreeMap<type_uuid::Bytes, AnyModel<Substate>>,
     state: State<Substate>,
     dispatchers: Vec<Dispatcher>,
 }
@@ -63,31 +63,21 @@ impl<Substate: ModelState> RunnerBuilder<Substate> {
 
     pub fn model_pure<M: PureModel>(mut self) -> Self {
         self.models
-            .insert(TypeId::of::<M::Action>(), Pure::<M>::into_vtable2());
+            .insert(M::Action::UUID, Pure::<M>::into_vtable2());
         self
     }
 
-    // pub fn model_input<M: InputModel>(mut self) -> Self {
-    //     self.models
-    //         .insert(TypeId::of::<M::Action>(), Input::<M>::into_vtable2());
-    //     self
-    // }
-
     pub fn model_pure_and_input<M: PureModel + InputModel>(mut self) -> Self {
-        self.models.insert(
-            TypeId::of::<<M as PureModel>::Action>(),
-            Pure::<M>::into_vtable2(),
-        );
-        self.models.insert(
-            TypeId::of::<<M as InputModel>::Action>(),
-            Input::<M>::into_vtable2(),
-        );
+        self.models
+            .insert(<M as PureModel>::Action::UUID, Pure::<M>::into_vtable2());
+        self.models
+            .insert(<M as InputModel>::Action::UUID, Input::<M>::into_vtable2());
         self
     }
 
     pub fn model_output<M: OutputModel>(mut self, model: Output<M>) -> Self {
         self.models
-            .insert(TypeId::of::<M::Action>(), Box::new(model).into_vtable());
+            .insert(M::Action::UUID, Box::new(model).into_vtable());
         self
     }
 
@@ -100,7 +90,7 @@ impl<Substate: ModelState> RunnerBuilder<Substate> {
 impl<Substate: ModelState> Runner<Substate> {
     pub fn new(
         state: State<Substate>,
-        models: BTreeMap<TypeId, AnyModel<Substate>>,
+        models: BTreeMap<type_uuid::Bytes, AnyModel<Substate>>,
         dispatchers: Vec<Dispatcher>,
     ) -> Self {
         Self {
@@ -127,19 +117,65 @@ impl<Substate: ModelState> Runner<Substate> {
         }
     }
 
-    fn process_action(&mut self, action: AnyAction, instance: usize) {
-        assert_ne!(action.id, TypeId::of::<AnyAction>());
+    fn process_action(&mut self, mut action: AnyAction, instance: usize) {
+        let dispatcher = &mut self.dispatchers[instance];
 
-        let Some(model) = self.models.get_mut(&action.id) else {
+        // Replayer: this is a special case where we handle actions coming from
+        // calls to a dummy function used in ResultDispatch. In this case we
+        // get the actual action's UUID from the replay file to find the right
+        // model and call its `process_input` action.
+        if action.uuid == SerializedResultDispatch::UUID {
+            if let Some(reader) = &mut dispatcher.replay_file {
+                let uuid: type_uuid::Bytes =
+                    deserialize_from(reader).expect("UUID deserialization failed");
+
+                println!("deserializing callback {:?}", uuid);
+                action.uuid = uuid;
+            } else {
+                unreachable!()
+            }
+        }
+
+        let Some(model) = self.models.get_mut(&action.uuid) else {
             panic!("action not found1 {}", action.type_name);
         };
-
-        let dispatcher = &mut self.dispatchers[instance];
 
         match action.kind {
             ActionKind::Pure => model.process_pure(&mut self.state, action, dispatcher),
             ActionKind::Input => model.process_input(&mut self.state, action, dispatcher),
             ActionKind::Output => model.process_output(action, dispatcher),
         }
+    }
+
+    // Run the state-machine main loop and record actions
+    pub fn record(&mut self, session_name: &str) {
+        let path = env::current_dir().expect("Failed to retrieve current directory");
+
+        for (instance, dispatcher) in self.dispatchers.iter_mut().enumerate() {
+            dispatcher.record(&format!(
+                "{}/{}_{}.rec",
+                path.to_str().unwrap(),
+                session_name,
+                instance
+            ))
+        }
+
+        self.run()
+    }
+
+    // Replay deterministically from a session's recording files
+    pub fn replay(&mut self, session_name: &str) {
+        let path = env::current_dir().expect("Failed to retrieve current directory");
+
+        for (instance, dispatcher) in self.dispatchers.iter_mut().enumerate() {
+            dispatcher.open_recording(&format!(
+                "{}/{}_{}.rec",
+                path.to_str().unwrap(),
+                session_name,
+                instance
+            ))
+        }
+
+        self.run()
     }
 }

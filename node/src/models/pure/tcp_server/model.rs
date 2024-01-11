@@ -9,7 +9,6 @@ use crate::{
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
-    dispatch, dispatch_back,
     models::pure::tcp::{
         action::{
             AcceptResult, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult,
@@ -46,7 +45,7 @@ impl InputModel for TcpServerState {
                 let server_state: &mut TcpServerState = state.substate_mut();
                 let Server { on_result, .. } = server_state.get_server(&server);
 
-                dispatch_back!(dispatcher, on_result, (server, result.clone()));
+                dispatcher.dispatch_back(on_result, (server, result.clone()));
 
                 if result.is_err() {
                     server_state.remove_server(&server)
@@ -64,16 +63,13 @@ impl InputModel for TcpServerState {
                         .substate_mut::<TcpServerState>()
                         .new_connection(connection, tcp_listener);
 
-                    dispatch!(
-                        dispatcher,
-                        TcpPureAction::Accept {
-                            connection,
-                            tcp_listener,
-                            on_result: ResultDispatch::new(|(connection, result)| {
-                                TcpServerInputAction::AcceptResult { connection, result }.into()
-                            }),
-                        }
-                    );
+                    dispatcher.dispatch(TcpPureAction::Accept {
+                        connection,
+                        tcp_listener,
+                        on_result: ResultDispatch::new(|(connection, result)| {
+                            TcpServerInputAction::AcceptResult { connection, result }.into()
+                        }),
+                    });
                 }
             }
             TcpServerInputAction::AcceptResult { connection, result } => {
@@ -89,22 +85,16 @@ impl InputModel for TcpServerState {
                     // TODO: this could probably better handled at low-level by changing the
                     // TcpListener backlog. Currently, MIO sets a fixed value of 1024.
                     AcceptResult::Success if server.connections.len() > server.max_connections => {
-                        dispatch!(
-                            dispatcher,
-                            TcpPureAction::Close {
-                                connection,
-                                on_result: ResultDispatch::new(|connection| {
-                                    TcpServerInputAction::CloseInternalResult { connection }.into()
-                                }),
-                            }
-                        )
+                        dispatcher.dispatch(TcpPureAction::Close {
+                            connection,
+                            on_result: ResultDispatch::new(|connection| {
+                                TcpServerInputAction::CloseInternalResult { connection }.into()
+                            }),
+                        })
                     }
                     // otherwise we notify the model user of the new connection.
-                    AcceptResult::Success => dispatch_back!(
-                        dispatcher,
-                        &server.on_new_connection,
-                        (*server_uid, connection)
-                    ),
+                    AcceptResult::Success => dispatcher
+                        .dispatch_back(&server.on_new_connection, (*server_uid, connection)),
                     // No new connections, ignore.
                     AcceptResult::WouldBlock => server.remove_connection(&connection),
                     // Warn about accept errors, but no user notification.
@@ -129,7 +119,7 @@ impl InputModel for TcpServerState {
                     .substate_mut::<TcpServerState>()
                     .get_connection_server_mut(&connection);
 
-                dispatch_back!(dispatcher, &server.on_close_connection, (uid, connection));
+                dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
                 server.remove_connection(&connection);
             }
             TcpServerInputAction::SendResult { uid, result } => {
@@ -141,18 +131,15 @@ impl InputModel for TcpServerState {
                     .take_send_request(&uid);
 
                 if let SendResult::Error(_) = result {
-                    dispatch!(
-                        dispatcher,
-                        TcpPureAction::Close {
-                            connection,
-                            on_result: ResultDispatch::new(|connection| {
-                                TcpServerInputAction::CloseResult { connection }.into()
-                            }),
-                        }
-                    );
+                    dispatcher.dispatch(TcpPureAction::Close {
+                        connection,
+                        on_result: ResultDispatch::new(|connection| {
+                            TcpServerInputAction::CloseResult { connection }.into()
+                        }),
+                    });
                 }
 
-                dispatch_back!(dispatcher, &on_result, (uid, result))
+                dispatcher.dispatch_back(&on_result, (uid, result))
             }
             TcpServerInputAction::RecvResult { uid, result } => {
                 let RecvRequest {
@@ -163,18 +150,15 @@ impl InputModel for TcpServerState {
                     .take_recv_request(&uid);
 
                 if let RecvResult::Error(_) = result {
-                    dispatch!(
-                        dispatcher,
-                        TcpPureAction::Close {
-                            connection,
-                            on_result: ResultDispatch::new(|connection| {
-                                TcpServerInputAction::CloseResult { connection }.into()
-                            }),
-                        }
-                    );
+                    dispatcher.dispatch(TcpPureAction::Close {
+                        connection,
+                        on_result: ResultDispatch::new(|connection| {
+                            TcpServerInputAction::CloseResult { connection }.into()
+                        }),
+                    });
                 }
 
-                dispatch_back!(dispatcher, &on_result, (uid, result))
+                dispatcher.dispatch_back(&on_result, (uid, result))
             }
         }
     }
@@ -224,9 +208,9 @@ fn handle_poll_result(
                 Ok(())
             };
 
-            dispatch_back!(dispatcher, &on_result, (uid, result));
+            dispatcher.dispatch_back(&on_result, (uid, result));
         }
-        Err(err) => dispatch_back!(dispatcher, &on_result, (uid, Err(err))),
+        Err(err) => dispatcher.dispatch_back(&on_result, (uid, Err(err))),
     }
 
     accept_list
@@ -257,16 +241,13 @@ impl PureModel for TcpServerState {
                     on_result,
                 );
 
-                dispatch!(
-                    dispatcher,
-                    TcpPureAction::Listen {
-                        tcp_listener: server,
-                        address,
-                        on_result: ResultDispatch::new(|(server, result)| {
-                            TcpServerInputAction::NewResult { server, result }.into()
-                        }),
-                    }
-                );
+                dispatcher.dispatch(TcpPureAction::Listen {
+                    tcp_listener: server,
+                    address,
+                    on_result: ResultDispatch::new(|(server, result)| {
+                        TcpServerInputAction::NewResult { server, result }.into()
+                    }),
+                });
             }
             TcpServerPureAction::Poll {
                 uid,
@@ -278,27 +259,23 @@ impl PureModel for TcpServerState {
 
                 server_state.set_poll_request(PollRequest { on_result });
 
-                dispatch!(
-                    dispatcher,
-                    TcpPureAction::Poll {
-                        uid,
-                        objects,
-                        timeout,
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            TcpServerInputAction::PollResult { uid, result }.into()
-                        }),
-                    }
-                )
+                dispatcher.dispatch(TcpPureAction::Poll {
+                    uid,
+                    objects,
+                    timeout,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        TcpServerInputAction::PollResult { uid, result }.into()
+                    }),
+                })
             }
-            TcpServerPureAction::Close { connection } => dispatch!(
-                dispatcher,
-                TcpPureAction::Close {
+            TcpServerPureAction::Close { connection } => {
+                dispatcher.dispatch(TcpPureAction::Close {
                     connection,
                     on_result: ResultDispatch::new(|connection| {
                         TcpServerInputAction::CloseResult { connection }.into()
                     }),
-                }
-            ),
+                })
+            }
             TcpServerPureAction::Send {
                 uid,
                 connection,
@@ -310,18 +287,15 @@ impl PureModel for TcpServerState {
                     .substate_mut::<TcpServerState>()
                     .new_send_request(&uid, connection, on_result);
 
-                dispatch!(
-                    dispatcher,
-                    TcpPureAction::Send {
-                        uid,
-                        connection,
-                        data,
-                        timeout,
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            TcpServerInputAction::SendResult { uid, result }.into()
-                        }),
-                    }
-                );
+                dispatcher.dispatch(TcpPureAction::Send {
+                    uid,
+                    connection,
+                    data,
+                    timeout,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        TcpServerInputAction::SendResult { uid, result }.into()
+                    }),
+                });
             }
             TcpServerPureAction::Recv {
                 uid,
@@ -334,18 +308,15 @@ impl PureModel for TcpServerState {
                     .substate_mut::<TcpServerState>()
                     .new_recv_request(&uid, connection, on_result);
 
-                dispatch!(
-                    dispatcher,
-                    TcpPureAction::Recv {
-                        uid,
-                        connection,
-                        count,
-                        timeout,
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            TcpServerInputAction::RecvResult { uid, result }.into()
-                        }),
-                    }
-                );
+                dispatcher.dispatch(TcpPureAction::Recv {
+                    uid,
+                    connection,
+                    count,
+                    timeout,
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        TcpServerInputAction::RecvResult { uid, result }.into()
+                    }),
+                });
             }
         }
     }

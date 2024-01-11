@@ -7,6 +7,7 @@ use crate::{
 };
 use std::{collections::BTreeSet, mem};
 
+#[derive(Debug)]
 pub struct Server {
     pub max_connections: usize,
     pub on_new_connection: ResultDispatch<(Uid, Uid)>,
@@ -36,20 +37,24 @@ impl Server {
     }
 }
 
+#[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
+#[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
+#[derive(Debug)]
 pub struct PollRequest {
     pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
 }
 
+#[derive(Debug)]
 pub struct TcpServerState {
     pub server_objects: Objects<Server>,
     pub send_requests: Objects<SendRequest>,

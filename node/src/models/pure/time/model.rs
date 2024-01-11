@@ -4,7 +4,6 @@ use crate::{
         model::{InputModel, PureModel},
         state::{ModelState, State},
     },
-    dispatch,
     models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction},
 };
 
@@ -17,7 +16,7 @@ pub fn update_time<Substate: ModelState>(
     let tick = state.substate_mut::<TimeState>().tick();
 
     if tick {
-        dispatch!(dispatcher, TimePureAction::UpdateCurrentTime);
+        dispatcher.dispatch(TimePureAction::UpdateCurrentTime);
     }
 
     return tick;
@@ -64,14 +63,11 @@ impl PureModel for TimeState {
         dispatcher: &mut Dispatcher,
     ) {
         assert!(matches!(action, TimePureAction::UpdateCurrentTime));
-        dispatch!(
-            dispatcher,
-            TimeOutputAction::GetSystemTime {
-                uid: state.new_uid(),
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    TimeInputAction::GetSystemTimeResult { uid, result }.into()
-                }),
-            }
-        )
+        dispatcher.dispatch(TimeOutputAction::GetSystemTime {
+            uid: state.new_uid(),
+            on_result: ResultDispatch::new(|(uid, result)| {
+                TimeInputAction::GetSystemTimeResult { uid, result }.into()
+            }),
+        })
     }
 }

@@ -1,3 +1,4 @@
+use serde_derive::{Deserialize, Serialize};
 use std::{any::Any, collections::BTreeMap};
 
 // `Uid` serves as a unique identifier (UID) for referencing objects across
@@ -8,7 +9,7 @@ use std::{any::Any, collections::BTreeMap};
 // not necessary. Instead, we use a 64-bit counter, which, while capable of
 // wrapping around, is practically unlikely to overflow within the program's
 // lifetime, thus providing unique values.
-#[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Debug)]
+#[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct Uid(u64);
 
 impl Default for Uid {

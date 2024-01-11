@@ -1,6 +1,7 @@
 use crate::automaton::{action::Timeout, state::Uid};
 use std::rc::Rc;
 
+#[derive(Debug)]
 pub struct EchoClientConfig {
     pub connect_to_address: String,
     pub connect_timeout: Timeout,
@@ -12,11 +13,13 @@ pub struct EchoClientConfig {
     pub max_rnd_timeout: u64,
 }
 
+#[derive(Debug)]
 pub struct SendRequest {
     pub uid: Uid,
     pub data: Rc<[u8]>,
 }
 
+#[derive(Debug)]
 pub struct RecvRequest {
     pub uid: Uid,
     // this contains the data of a previous SendRequest,
@@ -24,6 +27,7 @@ pub struct RecvRequest {
     pub data: Rc<[u8]>,
 }
 
+#[derive(Debug)]
 pub struct EchoClientState {
     pub ready: bool,
     pub connection: Option<Uid>,

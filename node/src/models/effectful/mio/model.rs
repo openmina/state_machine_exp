@@ -4,7 +4,7 @@ use crate::automaton::action::Dispatcher;
 use crate::automaton::model::{Output, OutputModel};
 use crate::automaton::runner::{RegisterModel, RunnerBuilder};
 use crate::automaton::state::ModelState;
-use crate::dispatch_back;
+
 
 // The `MioState` struct, implementing the `OutputModel` trait, provides the
 // interface layer between the state-machine and the MIO crate for asynchronous
@@ -35,20 +35,19 @@ impl OutputModel for MioState {
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
             MioOutputAction::PollCreate { poll, on_result } => {
-                dispatch_back!(dispatcher, &on_result, (poll, self.poll_create(poll)));
+                dispatcher.dispatch_back(&on_result, (poll, self.poll_create(poll)));
             }
             MioOutputAction::PollRegisterTcpServer {
                 poll,
                 tcp_listener,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
                     (
                         tcp_listener,
                         self.poll_register_tcp_server(&poll, tcp_listener),
-                    )
+                    ),
                 );
             }
             MioOutputAction::PollRegisterTcpConnection {
@@ -56,13 +55,12 @@ impl OutputModel for MioState {
                 connection,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
                     (
                         connection,
                         self.poll_register_tcp_connection(&poll, connection),
-                    )
+                    ),
                 );
             }
             MioOutputAction::PollDeregisterTcpConnection {
@@ -70,13 +68,12 @@ impl OutputModel for MioState {
                 connection,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
                     (
                         connection,
                         self.poll_deregister_tcp_connection(&poll, connection),
-                    )
+                    ),
                 );
             }
             MioOutputAction::PollEvents {
@@ -86,11 +83,8 @@ impl OutputModel for MioState {
                 timeout,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
-                    &on_result,
-                    (uid, self.poll_events(&poll, &events, timeout))
-                );
+                dispatcher
+                    .dispatch_back(&on_result, (uid, self.poll_events(&poll, &events, timeout)));
             }
             MioOutputAction::EventsCreate {
                 uid,
@@ -98,17 +92,16 @@ impl OutputModel for MioState {
                 on_result,
             } => {
                 self.events_create(uid, capacity);
-                dispatch_back!(dispatcher, &on_result, uid);
+                dispatcher.dispatch_back(&on_result, uid);
             }
             MioOutputAction::TcpListen {
                 tcp_listener,
                 address,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
-                    (tcp_listener, self.tcp_listen(tcp_listener, address))
+                    (tcp_listener, self.tcp_listen(tcp_listener, address)),
                 );
             }
             MioOutputAction::TcpAccept {
@@ -116,10 +109,9 @@ impl OutputModel for MioState {
                 tcp_listener,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
-                    (connection, self.tcp_accept(connection, &tcp_listener))
+                    (connection, self.tcp_accept(connection, &tcp_listener)),
                 );
             }
             MioOutputAction::TcpConnect {
@@ -127,10 +119,9 @@ impl OutputModel for MioState {
                 address,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
+                dispatcher.dispatch_back(
                     &on_result,
-                    (connection, self.tcp_connect(connection, address))
+                    (connection, self.tcp_connect(connection, address)),
                 );
             }
             MioOutputAction::TcpClose {
@@ -138,7 +129,7 @@ impl OutputModel for MioState {
                 on_result,
             } => {
                 self.tcp_close(&connection);
-                dispatch_back!(dispatcher, &on_result, connection);
+                dispatcher.dispatch_back(&on_result, connection);
             }
             MioOutputAction::TcpWrite {
                 uid,
@@ -146,11 +137,7 @@ impl OutputModel for MioState {
                 data,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
-                    &on_result,
-                    (uid, self.tcp_write(&connection_uid, &data))
-                );
+                dispatcher.dispatch_back(&on_result, (uid, self.tcp_write(&connection_uid, &data)));
             }
             MioOutputAction::TcpRead {
                 uid,
@@ -158,21 +145,14 @@ impl OutputModel for MioState {
                 len,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
-                    &on_result,
-                    (uid, self.tcp_read(&connection, len))
-                );
+                dispatcher.dispatch_back(&on_result, (uid, self.tcp_read(&connection, len)));
             }
             MioOutputAction::TcpGetPeerAddress {
                 connection,
                 on_result,
             } => {
-                dispatch_back!(
-                    dispatcher,
-                    &on_result,
-                    (connection, self.tcp_peer_address(&connection))
-                );
+                dispatcher
+                    .dispatch_back(&on_result, (connection, self.tcp_peer_address(&connection)));
             }
         }
     }

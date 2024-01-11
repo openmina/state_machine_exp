@@ -6,21 +6,25 @@ use crate::{
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult},
 };
 
+#[derive(Debug)]
 pub struct Connection {
     pub on_close_connection: ResultDispatch<Uid>,
     pub on_result: ResultDispatch<(Uid, ConnectionResult)>,
 }
 
+#[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
+#[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
     pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
+#[derive(Debug)]
 pub struct TcpClientState {
     pub connections: Objects<Connection>,
     pub send_requests: Objects<SendRequest>,

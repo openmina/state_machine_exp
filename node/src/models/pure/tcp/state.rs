@@ -3,13 +3,13 @@ use super::action::{
 };
 use crate::{
     automaton::{
-        action::{ResultDispatch, Timeout, TimeoutAbsolute},
+        action::{self, ResultDispatch, Timeout, TimeoutAbsolute},
         state::{Objects, Uid},
     },
     models::effectful::mio::action::MioEvent,
 };
 use core::panic;
-//use log::info;
+use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
 
 pub trait EventUpdater {
@@ -19,7 +19,7 @@ pub trait EventUpdater {
     fn events_mut(&mut self) -> &mut Self::Event;
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Listener {
     pub address: String,
     pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
@@ -72,7 +72,7 @@ impl EventUpdater for Listener {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PollRequest {
     pub objects: Vec<Uid>,
     pub timeout: Timeout,
@@ -93,13 +93,13 @@ impl PollRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ConnectionDirection {
     Incoming { tcp_listener: Uid },
     Outgoing,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ConnectionStatus {
     Pending,
     PendingCheck,
@@ -109,7 +109,7 @@ pub enum ConnectionStatus {
     },
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Connection {
     pub status: ConnectionStatus,
     pub direction: ConnectionDirection,
@@ -192,9 +192,13 @@ impl EventUpdater for Connection {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SendRequest {
     pub connection: Uid,
+    #[serde(
+        serialize_with = "action::serialize_rc_bytes",
+        deserialize_with = "action::deserialize_rc_bytes"
+    )]
     pub data: Rc<[u8]>,
     pub bytes_sent: usize,
     pub send_on_poll: bool,
@@ -221,7 +225,7 @@ impl SendRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
     pub data: Vec<u8>,
@@ -250,7 +254,7 @@ impl RecvRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Status {
     New,
     InitError {
@@ -274,6 +278,7 @@ pub enum Status {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TcpState {
     pub status: Status,
     listener_objects: Objects<Listener>,

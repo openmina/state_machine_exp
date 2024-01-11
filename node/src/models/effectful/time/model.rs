@@ -1,12 +1,9 @@
 use super::{action::TimeOutputAction, state::TimeState};
-use crate::{
-    automaton::{
-        action::Dispatcher,
-        model::{Output, OutputModel},
-        runner::{RegisterModel, RunnerBuilder},
-        state::ModelState,
-    },
-    dispatch_back,
+use crate::automaton::{
+    action::Dispatcher,
+    model::{Output, OutputModel},
+    runner::{RegisterModel, RunnerBuilder},
+    state::ModelState,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,7 +30,7 @@ impl OutputModel for TimeState {
                     .duration_since(UNIX_EPOCH)
                     .expect("System clock set before UNIX_EPOCH");
 
-                dispatch_back!(dispatcher, &on_result, (uid, since_epoch));
+                dispatcher.dispatch_back(&on_result, (uid, since_epoch));
             }
         }
     }

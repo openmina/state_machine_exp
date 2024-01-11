@@ -1,13 +1,16 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind, ResultDispatch, Timeout},
+        action::{self, Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
+use type_uuid::TypeUuid;
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "9bb1c88e-71c8-4a55-8074-cd3dd939a1fb"]
 pub enum TcpServerPureAction {
     New {
         address: String,
@@ -28,6 +31,10 @@ pub enum TcpServerPureAction {
     Send {
         uid: Uid,
         connection: Uid,
+        #[serde(
+            serialize_with = "action::serialize_rc_bytes",
+            deserialize_with = "action::deserialize_rc_bytes"
+        )]
         data: Rc<[u8]>,
         timeout: Timeout,
         on_result: ResultDispatch<(Uid, SendResult)>,
@@ -41,11 +48,15 @@ pub enum TcpServerPureAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for TcpServerPureAction {
-    const KIND: ActionKind = ActionKind::Pure;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Pure
+    }
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "577ab1fe-220a-489b-a8c3-c63b5b7bbf9a"]
 pub enum TcpServerInputAction {
     NewResult {
         server: Uid,
@@ -75,6 +86,9 @@ pub enum TcpServerInputAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for TcpServerInputAction {
-    const KIND: ActionKind = ActionKind::Input;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Input
+    }
 }

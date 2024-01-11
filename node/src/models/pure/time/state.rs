@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     automaton::{
         runner::{RegisterModel, RunnerBuilder},
@@ -7,8 +5,10 @@ use crate::{
     },
     models::effectful,
 };
+use serde_derive::{Deserialize, Serialize};
+use std::time::Duration;
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 pub struct TimeState {
     now: Duration,
     tick: bool,

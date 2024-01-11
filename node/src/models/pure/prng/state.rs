@@ -5,6 +5,7 @@ pub struct PRNGConfig {
     pub seed: u64,
 }
 
+#[derive(Debug)]
 pub struct PRNGState {
     pub rng: SmallRng,
 }

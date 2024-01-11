@@ -9,7 +9,6 @@ use crate::{
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
-    dispatch,
     models::pure::{
         tcp::action::{RecvResult, SendResult, TcpPureAction},
         tcp_server::{action::TcpServerPureAction, state::TcpServerState},
@@ -29,7 +28,7 @@ use log::{info, warn};
 // client connections.
 //
 // The `PureModel` implementation of the `EchoServerState` model processes
-// `EchoServerTickAction` actions that are dispatched at each "tick" of the 
+// `EchoServerTickAction` actions that are dispatched at each "tick" of the
 // state-machine loop.
 //
 // During each "tick", the model performs two key tasks:
@@ -80,28 +79,22 @@ impl PureModel for EchoServerState {
         let EchoServerState { ready, config, .. } = state.substate_mut();
 
         if !*ready {
-            dispatch!(
-                dispatcher,
-                TcpPureAction::Init {
-                    instance: state.new_uid(),
-                    on_result: ResultDispatch::new(|(instance, result)| {
-                        EchoServerInputAction::InitResult { instance, result }.into()
-                    }),
-                }
-            )
+            dispatcher.dispatch(TcpPureAction::Init {
+                instance: state.new_uid(),
+                on_result: ResultDispatch::new(|(instance, result)| {
+                    EchoServerInputAction::InitResult { instance, result }.into()
+                }),
+            })
         } else {
             let timeout = Timeout::Millis(config.poll_timeout);
 
-            dispatch!(
-                dispatcher,
-                TcpServerPureAction::Poll {
-                    uid: state.new_uid(),
-                    timeout,
-                    on_result: ResultDispatch::new(|(uid, result)| {
-                        EchoServerInputAction::PollResult { uid, result }.into()
-                    }),
-                }
-            )
+            dispatcher.dispatch(TcpServerPureAction::Poll {
+                uid: state.new_uid(),
+                timeout,
+                on_result: ResultDispatch::new(|(uid, result)| {
+                    EchoServerInputAction::PollResult { uid, result }.into()
+                }),
+            })
         }
     }
 }
@@ -122,23 +115,20 @@ impl InputModel for EchoServerState {
                     let max_connections = config.max_connections;
 
                     // Init TcpServer model
-                    dispatch!(
-                        dispatcher,
-                        TcpServerPureAction::New {
-                            server: state.new_uid(),
-                            address,
-                            max_connections,
-                            on_new_connection: ResultDispatch::new(|(_, connection)| {
-                                EchoServerInputAction::NewConnection { connection }.into()
-                            }),
-                            on_close_connection: ResultDispatch::new(|(_, connection)| {
-                                EchoServerInputAction::Closed { connection }.into()
-                            }),
-                            on_result: ResultDispatch::new(|(server, result)| {
-                                EchoServerInputAction::NewServerResult { server, result }.into()
-                            }),
-                        }
-                    );
+                    dispatcher.dispatch(TcpServerPureAction::New {
+                        server: state.new_uid(),
+                        address,
+                        max_connections,
+                        on_new_connection: ResultDispatch::new(|(_, connection)| {
+                            EchoServerInputAction::NewConnection { connection }.into()
+                        }),
+                        on_close_connection: ResultDispatch::new(|(_, connection)| {
+                            EchoServerInputAction::Closed { connection }.into()
+                        }),
+                        on_result: ResultDispatch::new(|(server, result)| {
+                            EchoServerInputAction::NewServerResult { server, result }.into()
+                        }),
+                    });
                 }
                 Err(error) => panic!("Server initialization failed: {}", error),
             },
@@ -178,7 +168,7 @@ impl InputModel for EchoServerState {
                 match result {
                     SendResult::Success => (),
                     SendResult::Timeout => {
-                        dispatch!(dispatcher, TcpServerPureAction::Close { connection });
+                        dispatcher.dispatch(TcpServerPureAction::Close { connection });
                         warn!("|ECHO_SERVER| send {:?} timeout", uid)
                     }
                     SendResult::Error(error) => {
@@ -206,18 +196,15 @@ fn receive_data_from_clients<Substate: ModelState>(
             uid, count, connection, timeout
         );
 
-        dispatch!(
-            dispatcher,
-            TcpServerPureAction::Recv {
-                uid,
-                connection,
-                count,
-                timeout: timeout.clone(),
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    EchoServerInputAction::RecvResult { uid, result }.into()
-                }),
-            }
-        );
+        dispatcher.dispatch(TcpServerPureAction::Recv {
+            uid,
+            connection,
+            count,
+            timeout: timeout.clone(),
+            on_result: ResultDispatch::new(|(uid, result)| {
+                EchoServerInputAction::RecvResult { uid, result }.into()
+            }),
+        });
 
         state
             .substate_mut::<EchoServerState>()
@@ -238,22 +225,19 @@ fn send_back_received_data_to_client(
         RecvResult::Success(data) | RecvResult::Timeout(data) => {
             // It is OK to get a timeout if it contains partial data (< 1024 bytes)
             if data.len() != 0 {
-                dispatch!(
-                    dispatcher,
-                    TcpServerPureAction::Send {
-                        uid,
-                        connection,
-                        data: data.into(),
-                        timeout: Timeout::Millis(100),
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            EchoServerInputAction::SendResult { uid, result }.into()
-                        }),
-                    }
-                );
+                dispatcher.dispatch(TcpServerPureAction::Send {
+                    uid,
+                    connection,
+                    data: data.into(),
+                    timeout: Timeout::Millis(100),
+                    on_result: ResultDispatch::new(|(uid, result)| {
+                        EchoServerInputAction::SendResult { uid, result }.into()
+                    }),
+                });
             } else {
                 // On recv errors the connection is closed automatically by the TcpServer model.
                 // Timeouts are not errors, so here we close it explicitly.
-                dispatch!(dispatcher, TcpServerPureAction::Close { connection });
+                dispatcher.dispatch(TcpServerPureAction::Close { connection });
                 warn!("|ECHO_SERVER| recv {:?} timeout", uid)
             }
         }

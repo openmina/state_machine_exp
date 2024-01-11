@@ -23,9 +23,11 @@ use crate::{
     },
 };
 use model_state_derive::ModelState;
+//use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::any::Any;
 
-#[derive(ModelState)]
+#[derive(ModelState, /*Serialize, Deserialize,*/ Debug)]
 pub struct EchoServer {
     pub time: TimeState,
     pub tcp: TcpState,
@@ -44,7 +46,7 @@ impl EchoServer {
     }
 }
 
-#[derive(ModelState)]
+#[derive(ModelState, /*Serialize, Deserialize,*/ Debug)]
 pub struct EchoClient {
     pub prng: PRNGState,
     pub time: TimeState,
@@ -65,7 +67,7 @@ impl EchoClient {
     }
 }
 
-#[derive(ModelState)]
+#[derive(ModelState, /*Serialize, Deserialize,*/ Debug)]
 pub enum EchoNetwork {
     EchoServer(EchoServer),
     EchoClient(EchoClient),
@@ -138,7 +140,7 @@ fn echo_server_n_clients(n_clients: u64) {
         );
     }
 
-    builder.build().run()
+    builder.build().record("echo_network")
 }
 
 #[test]

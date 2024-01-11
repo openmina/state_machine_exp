@@ -1,9 +1,10 @@
-use std::rc::Rc;
-
 use crate::automaton::{
-    action::{Action, ActionKind, ResultDispatch, Timeout},
+    action::{self, Action, ActionKind, ResultDispatch, Timeout},
     state::Uid,
 };
+use serde::{Deserialize, Serialize};
+use std::rc::Rc;
+use type_uuid::TypeUuid;
 
 // `MioOutputAction` is an enum representing various I/O related operations
 // that can be performed. These actions are dispatched for handling by the
@@ -20,7 +21,8 @@ use crate::automaton::{
 // Note: `Uid` is used to uniquely identify instances of various Model-
 // specific objects like polls, connections, events etc.
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "6ade1356-d5fe-4c28-8fa9-fe4ee2fffc5f"]
 pub enum MioOutputAction {
     PollCreate {
         poll: Uid,
@@ -75,8 +77,13 @@ pub enum MioOutputAction {
     TcpWrite {
         uid: Uid,        // passed back to call-back action to identify the request
         connection: Uid, // created by TcpAccept/TcpConnect
+
         // Strictly speaking, we should pass a copy here instead of referencing memory,
         // but the Rc guarantees immutability, allowing safe and efficient data sharing.
+        #[serde(
+            serialize_with = "action::serialize_rc_bytes",
+            deserialize_with = "action::deserialize_rc_bytes"
+        )]
         data: Rc<[u8]>,
         on_result: ResultDispatch<(Uid, TcpWriteResult)>,
     },
@@ -92,11 +99,14 @@ pub enum MioOutputAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for MioOutputAction {
-    const KIND: ActionKind = ActionKind::Output;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Output
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum TcpWriteResult {
     WrittenAll,
     WrittenPartial(usize),
@@ -105,7 +115,7 @@ pub enum TcpWriteResult {
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum TcpReadResult {
     ReadAll(Vec<u8>),
     ReadPartial(Vec<u8>),
@@ -114,14 +124,14 @@ pub enum TcpReadResult {
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum TcpAcceptResult {
     Success,
     WouldBlock,
     Error(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct MioEvent {
     pub token: Uid,
     pub readable: bool,
@@ -134,7 +144,7 @@ pub struct MioEvent {
     pub lio: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum PollResult {
     Events(Vec<MioEvent>),
     Interrupted,

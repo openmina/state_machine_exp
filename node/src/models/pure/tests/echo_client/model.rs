@@ -9,7 +9,6 @@ use crate::{
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
-    dispatch,
     models::pure::{
         prng::state::PRNGState,
         tcp::action::{ConnectResult, ConnectionResult, RecvResult, SendResult, TcpPureAction},
@@ -90,28 +89,22 @@ impl PureModel for EchoClientState {
 
         if !*ready {
             // Init TCP model
-            dispatch!(
-                dispatcher,
-                TcpPureAction::Init {
-                    instance: state.new_uid(),
-                    on_result: ResultDispatch::new(|(instance, result)| {
-                        EchoClientInputAction::InitResult { instance, result }.into()
-                    }),
-                }
-            )
+            dispatcher.dispatch(TcpPureAction::Init {
+                instance: state.new_uid(),
+                on_result: ResultDispatch::new(|(instance, result)| {
+                    EchoClientInputAction::InitResult { instance, result }.into()
+                }),
+            })
         } else {
             let timeout = Timeout::Millis(config.poll_timeout);
             // If the client is already initialized then we poll on each "tick".
-            dispatch!(
-                dispatcher,
-                TcpClientPureAction::Poll {
-                    uid: state.new_uid(),
-                    timeout,
-                    on_result: ResultDispatch::new(|(uid, result)| {
-                        EchoClientInputAction::PollResult { uid, result }.into()
-                    }),
-                }
-            )
+            dispatcher.dispatch(TcpClientPureAction::Poll {
+                uid: state.new_uid(),
+                timeout,
+                on_result: ResultDispatch::new(|(uid, result)| {
+                    EchoClientInputAction::PollResult { uid, result }.into()
+                }),
+            })
         }
     }
 }
@@ -217,7 +210,7 @@ impl InputModel for EchoClientState {
                         request.data,
                     ),
                     SendResult::Timeout => {
-                        dispatch!(dispatcher, TcpClientPureAction::Close { connection });
+                        dispatcher.dispatch(TcpClientPureAction::Close { connection });
                         warn!("|ECHO_CLIENT| send {:?} timeout", uid)
                     }
                     SendResult::Error(error) => {
@@ -250,7 +243,7 @@ impl InputModel for EchoClientState {
                         info!("|ECHO_CLIENT| recv {:?} data matches what was sent", uid);
                     }
                     RecvResult::Timeout(_) => {
-                        dispatch!(dispatcher, TcpClientPureAction::Close { connection });
+                        dispatcher.dispatch(TcpClientPureAction::Close { connection });
                         warn!("|ECHO_CLIENT| recv {:?} timeout", uid)
                     }
                     RecvResult::Error(error) => {
@@ -273,20 +266,17 @@ fn connect(client_state: &EchoClientState, dispatcher: &mut Dispatcher, connecti
         ..
     } = client_state;
 
-    dispatch!(
-        dispatcher,
-        TcpClientPureAction::Connect {
-            connection,
-            address: connect_to_address.clone(),
-            timeout: timeout.clone(),
-            on_close_connection: ResultDispatch::new(|connection| {
-                EchoClientInputAction::Closed { connection }.into()
-            }),
-            on_result: ResultDispatch::new(|(connection, result)| {
-                EchoClientInputAction::ConnectResult { connection, result }.into()
-            })
-        }
-    );
+    dispatcher.dispatch(TcpClientPureAction::Connect {
+        connection,
+        address: connect_to_address.clone(),
+        timeout: timeout.clone(),
+        on_close_connection: ResultDispatch::new(|connection| {
+            EchoClientInputAction::Closed { connection }.into()
+        }),
+        on_result: ResultDispatch::new(|(connection, result)| {
+            EchoClientInputAction::ConnectResult { connection, result }.into()
+        }),
+    });
 }
 
 fn reconnect(
@@ -330,18 +320,15 @@ fn send_random_data_to_server<Substate: ModelState>(
         data: random_data.into(),
     };
 
-    dispatch!(
-        dispatcher,
-        TcpClientPureAction::Send {
-            uid: request.uid.clone(),
-            connection,
-            data: request.data.clone(),
-            timeout: Timeout::Millis(200),
-            on_result: ResultDispatch::new(|(uid, result)| {
-                EchoClientInputAction::SendResult { uid, result }.into()
-            }),
-        }
-    );
+    dispatcher.dispatch(TcpClientPureAction::Send {
+        uid: request.uid.clone(),
+        connection,
+        data: request.data.clone(),
+        timeout: Timeout::Millis(200),
+        on_result: ResultDispatch::new(|(uid, result)| {
+            EchoClientInputAction::SendResult { uid, result }.into()
+        }),
+    });
 
     state.substate_mut::<EchoClientState>().send_request = Some(request);
 }
@@ -374,18 +361,15 @@ fn recv_from_server_with_random_timeout<Substate: ModelState>(
         uid, count, connection, timeout
     );
 
-    dispatch!(
-        dispatcher,
-        TcpClientPureAction::Recv {
-            uid,
-            connection,
-            count,
-            timeout,
-            on_result: ResultDispatch::new(|(uid, result)| {
-                EchoClientInputAction::RecvResult { uid, result }.into()
-            }),
-        }
-    );
+    dispatcher.dispatch(TcpClientPureAction::Recv {
+        uid,
+        connection,
+        count,
+        timeout,
+        on_result: ResultDispatch::new(|(uid, result)| {
+            EchoClientInputAction::RecvResult { uid, result }.into()
+        }),
+    });
 
     state.substate_mut::<EchoClientState>().recv_request = Some(RecvRequest { uid, data });
 }

@@ -1,11 +1,13 @@
-use std::time::Duration;
-
 use crate::automaton::{
     action::{Action, ActionKind, ResultDispatch},
     state::Uid,
 };
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use type_uuid::TypeUuid;
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "3221c0d5-02f5-4ed6-bf79-29f40c5619f0"]
 pub enum TimeOutputAction {
     GetSystemTime {
         uid: Uid,
@@ -13,6 +15,9 @@ pub enum TimeOutputAction {
     },
 }
 
+//#[typetag::serde]
 impl Action for TimeOutputAction {
-    const KIND: ActionKind = ActionKind::Output;
+    fn kind(&self) -> ActionKind {
+        ActionKind::Output
+    }
 }

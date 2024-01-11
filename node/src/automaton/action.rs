@@ -1,19 +1,44 @@
+use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
     collections::VecDeque,
     fmt,
+    fs::{File, OpenOptions},
+    io::{BufReader, BufWriter},
+    ops::Deref,
+    panic::Location,
+    rc::Rc,
 };
+use type_uuid::{TypeUuid, TypeUuidDynamic};
 
-#[derive(Clone, Debug)]
+use super::model::{InputModel, OutputModel, PureModel};
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum Timeout {
     Millis(u64),
     Never,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum TimeoutAbsolute {
     Millis(u128),
     Never,
+}
+
+pub fn serialize_rc_bytes<S>(data: &Rc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let vec: Vec<u8> = data.deref().to_vec();
+    vec.serialize(serializer)
+}
+
+pub fn deserialize_rc_bytes<'de, D>(deserializer: D) -> Result<Rc<[u8]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let vec: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    Ok(Rc::from(vec.into_boxed_slice()))
 }
 
 // Actions fall into 3 categories:
@@ -45,7 +70,7 @@ pub enum TimeoutAbsolute {
 //    "external world". `OutputModel`s don't have access to the state-machine
 //    state, but they have their own (minimal) state.
 //
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ActionKind {
     Pure,
     Input,
@@ -54,46 +79,91 @@ pub enum ActionKind {
 
 pub trait Action
 where
-    Self: 'static,
+    Self: TypeUuidDynamic + fmt::Debug + 'static,
 {
-    const KIND: ActionKind;
+    fn kind(&self) -> ActionKind;
 }
 
-#[derive(Debug)]
-pub struct AnyAction {
-    pub id: TypeId,
-    pub ptr: Box<dyn Any>,
-    pub kind: ActionKind,
-    /// For printing/debug purpose only
-    pub type_name: &'static str,
-    pub dispatched_from_file: &'static str,
-    pub dispatched_from_line: u32,
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct ActionDebugInfo {
+    pub location_file: String,
+    pub location_line: u32,
     pub depth: usize,
     pub action_id: u64,
     // action id of caller action
     pub caller: u64,
 }
 
+pub struct AnyAction {
+    pub uuid: type_uuid::Bytes,
+    pub kind: ActionKind,
+    pub ptr: Box<dyn Any>,
+    // For printing/debug purpose only
+    pub type_name: &'static str,
+    pub dbginfo: ActionDebugInfo,
+}
+
 impl<T: Action> From<T> for AnyAction {
     fn from(v: T) -> Self {
-        // Panic when calling `AnyAction::from(AnyAction { .. })`
-        assert_ne!(TypeId::of::<T>(), TypeId::of::<AnyAction>());
         Self {
-            id: TypeId::of::<T>(),
+            uuid: v.uuid(),
+            kind: v.kind(),
             ptr: Box::new(v),
-            kind: T::KIND,
             type_name: std::any::type_name::<T>(),
-            dispatched_from_file: "",
-            dispatched_from_line: 0,
-            depth: 0,
-            action_id: 0,
-            caller: 0,
+            dbginfo: ActionDebugInfo {
+                location_file: String::new(),
+                location_line: 0,
+                depth: 0,
+                action_id: 0,
+                caller: 0,
+            },
         }
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug + Sized + 'static> {
+    pub action: T,
+    pub dbginfo: ActionDebugInfo,
+}
+
+// This is a special action used for replaying purposes.
+// When serializing a ResultDispatch field we lose the function pointer used to
+// produce the resulting InputAction, so when deserializing we will build a
+// dummy function that returns `SerializedResultDispatch` action.
+// When the callback is dispatched the process function will deserialize the
+// correct action from the replay file.
+#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
+#[uuid = "47a5f477-8715-4968-8823-4334114cd252"]
+pub struct SerializedResultDispatch();
+
+impl Action for SerializedResultDispatch {
+    fn kind(&self) -> ActionKind {
+        ActionKind::Input
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
 pub struct ResultDispatch<R: Clone>(fn(R) -> AnyAction);
+
+impl<'de, R: Clone + Deserialize<'de>> Deserialize<'de> for ResultDispatch<R> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)?; // deserialize ()
+        Ok(Self(|_| SerializedResultDispatch().into()))
+    }
+}
+
+impl<R: Clone + Serialize> Serialize for ResultDispatch<R> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_unit()
+    }
+}
 
 impl<R: Clone> ResultDispatch<R> {
     pub fn new(ptr: fn(R) -> AnyAction) -> Self {
@@ -123,7 +193,6 @@ pub struct Dispatcher {
     // The nesting level into the action chain: if action `A` has `depth=1` and
     // its handler dispatches `B`,then `B` has `depth=2`.
     pub depth: usize,
-
     // Every dispatched action has an unique `action_id` for the lifetime of
     // the state-machine. In combination with an action's `caller` we can
     // reconstruct the flow graph of all actions.
@@ -131,6 +200,10 @@ pub struct Dispatcher {
     // The action's `caller` is the `action_id` of the action that was being
     // handled at the moment the current action was dispatched.
     pub caller: u64,
+
+    // Record/Replay
+    pub record_file: Option<BufWriter<File>>,
+    pub replay_file: Option<BufReader<File>>,
 }
 
 impl Dispatcher {
@@ -141,6 +214,8 @@ impl Dispatcher {
             depth: 0,
             action_id: 0,
             caller: 0,
+            record_file: None,
+            replay_file: None,
         }
     }
 
@@ -148,8 +223,8 @@ impl Dispatcher {
         self.queue.pop_front().unwrap_or_else(|| {
             let mut any_action = (self.tick)();
 
-            any_action.action_id = self.action_id;
-            any_action.caller = 0;
+            any_action.dbginfo.action_id = self.action_id;
+            any_action.dbginfo.caller = 0;
             self.depth = 0;
             self.action_id += 1;
             self.caller = 0;
@@ -157,60 +232,66 @@ impl Dispatcher {
         })
     }
 
-    pub fn dispatch<A: Action>(&mut self, action: A, file: &'static str, line: u32)
+    pub fn record(&mut self, filename: &str) {
+        assert!(self.record_file.is_none());
+        self.record_file = Some(BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(false)
+                .open(filename)
+                .expect(&format!("Recorder: failed to open file: {}", filename)),
+        ));
+    }
+
+    pub fn open_recording(&mut self, filename: &str) {
+        assert!(self.replay_file.is_none());
+        self.replay_file = Some(BufReader::new(
+            File::open(filename).expect(&format!("Replayer: failed to open file: {}", filename)),
+        ));
+    }
+
+    #[track_caller]
+    pub fn dispatch<A: Action>(&mut self, action: A)
     where
         A: Sized + 'static,
     {
+        let location = Location::caller();
         assert_ne!(TypeId::of::<A>(), TypeId::of::<AnyAction>());
         let mut any_action: AnyAction = action.into();
+        assert!(matches!(
+            any_action.kind,
+            ActionKind::Pure | ActionKind::Output
+        ));
 
-        any_action.dispatched_from_file = file;
-        any_action.dispatched_from_line = line;
-        any_action.depth = self.depth + 1;
-        any_action.action_id = self.action_id;
-        any_action.caller = self.caller;
+        any_action.dbginfo = ActionDebugInfo {
+            location_file: location.file().to_string(),
+            location_line: location.line(),
+            depth: self.depth + 1,
+            action_id: self.action_id,
+            caller: self.caller,
+        };
         self.action_id += 1;
         self.queue.push_back(any_action);
     }
 
-    pub fn dispatch_back<R: Clone>(
-        &mut self,
-        on_result: &ResultDispatch<R>,
-        result: R,
-        file: &'static str,
-        line: u32,
-    ) where
+    #[track_caller]
+    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch<R>, result: R)
+    where
         R: Sized + 'static,
     {
+        let location = Location::caller();
         let mut any_action = on_result.make(result);
-        assert_ne!(any_action.id, TypeId::of::<AnyAction>());
         assert!(matches!(any_action.kind, ActionKind::Input));
 
-        any_action.dispatched_from_file = file;
-        any_action.dispatched_from_line = line;
-        any_action.depth = self.depth.saturating_sub(1);
-        any_action.action_id = self.action_id;
-        any_action.caller = self.caller;
+        any_action.dbginfo = ActionDebugInfo {
+            location_file: location.file().to_string(),
+            location_line: location.line(),
+            depth: self.depth.saturating_sub(1),
+            action_id: self.action_id,
+            caller: self.caller,
+        };
         self.action_id += 1;
         self.queue.push_back(any_action);
     }
-}
-
-// The following macros are wrappers to the `dispatch` and `dispatch_back`
-// methods so we can include into every action the source code file and
-// line number where the action was dispatched. Their purpose is just to
-// aid with debugging.
-
-#[macro_export]
-macro_rules! dispatch {
-    ($dispatcher:expr, $action:expr) => {
-        $dispatcher.dispatch($action, file!(), line!())
-    };
-}
-
-#[macro_export]
-macro_rules! dispatch_back {
-    ($dispatcher:expr, $on_result:expr, $result:expr) => {
-        $dispatcher.dispatch_back($on_result, $result, file!(), line!())
-    };
 }

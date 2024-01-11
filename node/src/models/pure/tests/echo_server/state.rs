@@ -2,10 +2,12 @@ use crate::automaton::state::{Objects, Uid};
 use core::panic;
 use std::collections::BTreeMap;
 
+#[derive(Debug)]
 pub struct Connection {
     pub recv_uid: Option<Uid>,
 }
 
+#[derive(Debug)]
 pub struct EchoServerConfig {
     pub address: String,
     pub max_connections: usize,
@@ -13,6 +15,7 @@ pub struct EchoServerConfig {
     pub recv_timeout: u64,
 }
 
+#[derive(Debug)]
 pub struct EchoServerState {
     pub ready: bool,
     pub connections: Objects<Connection>,
