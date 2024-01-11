@@ -5,7 +5,7 @@ use crate::{
     },
     models::effectful::mio::action::{PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
 use type_uuid::TypeUuid;
 
@@ -62,7 +62,6 @@ pub enum TcpPureAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for TcpPureAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure
@@ -124,7 +123,6 @@ pub enum TcpInputAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for TcpInputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Input

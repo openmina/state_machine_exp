@@ -1,7 +1,6 @@
 use crate::automaton::action::{Action, ActionKind};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
-
 
 #[allow(dead_code)]
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
@@ -10,7 +9,6 @@ pub enum PRNGPureAction {
     Reseed { seed: u64 },
 }
 
-//#[typetag::serde]
 impl Action for PRNGPureAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure

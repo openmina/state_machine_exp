@@ -5,14 +5,13 @@ use crate::{
     },
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "57c25007-3c1d-4871-8faf-6d1576c94ec4"]
 pub struct EchoClientTickAction();
 
-//#[typetag::serde]
 impl Action for EchoClientTickAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure
@@ -47,7 +46,6 @@ pub enum EchoClientInputAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for EchoClientInputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Input

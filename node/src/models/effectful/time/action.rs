@@ -2,7 +2,7 @@ use crate::automaton::{
     action::{Action, ActionKind, ResultDispatch},
     state::Uid,
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 use type_uuid::TypeUuid;
 
@@ -15,7 +15,6 @@ pub enum TimeOutputAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for TimeOutputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Output

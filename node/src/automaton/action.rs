@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_derive::{Serialize, Deserialize};
 use std::{
     any::{Any, TypeId},
     collections::VecDeque,

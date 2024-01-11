@@ -5,7 +5,7 @@ use crate::{
     },
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Serialize, Deserialize};
 use std::rc::Rc;
 use type_uuid::TypeUuid;
 
@@ -86,7 +86,6 @@ pub enum TcpServerInputAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for TcpServerInputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Input

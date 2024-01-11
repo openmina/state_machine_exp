@@ -2,7 +2,7 @@ use crate::automaton::{
     action::{Action, ActionKind},
     state::Uid,
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 use type_uuid::TypeUuid;
 
@@ -12,7 +12,6 @@ pub enum TimePureAction {
     UpdateCurrentTime,
 }
 
-//#[typetag::serde]
 impl Action for TimePureAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure
@@ -25,7 +24,6 @@ pub enum TimeInputAction {
     GetSystemTimeResult { uid: Uid, result: Duration },
 }
 
-//#[typetag::serde]
 impl Action for TimeInputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Input

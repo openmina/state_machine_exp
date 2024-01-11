@@ -2,7 +2,7 @@ use crate::automaton::{
     action::{self, Action, ActionKind, ResultDispatch, Timeout},
     state::Uid,
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
 use type_uuid::TypeUuid;
 
@@ -99,7 +99,6 @@ pub enum MioOutputAction {
     },
 }
 
-//#[typetag::serde]
 impl Action for MioOutputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Output
