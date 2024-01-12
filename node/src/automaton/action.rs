@@ -284,7 +284,12 @@ impl Dispatcher {
         R: Sized + 'static,
     {
         let location = Location::caller();
-        let mut any_action = on_result.make(result);
+        let mut any_action = if self.is_replayer() {
+            SerializedResultDispatch().into()
+        } else {
+            on_result.make(result)
+        };
+
         assert!(matches!(any_action.kind, ActionKind::Input));
 
         any_action.dbginfo = ActionDebugInfo {
