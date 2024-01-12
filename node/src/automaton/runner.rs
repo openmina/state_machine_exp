@@ -123,22 +123,56 @@ impl<Substate: ModelState> Runner<Substate> {
         // Replayer: this is a special case where we handle actions coming from
         // calls to a dummy function used in ResultDispatch. In this case we
         // get the actual action's UUID from the replay file to find the right
-        // model and call its `process_input` action.
+        // model.
         if action.uuid == SerializedResultDispatch::UUID {
-            if let Some(reader) = &mut dispatcher.replay_file {
-                let uuid: type_uuid::Bytes =
-                    deserialize_from(reader).expect("UUID deserialization failed");
+            let reader = dispatcher
+                .replay_file
+                .as_mut()
+                .expect("SerializedResultDispatch UUID but not in replay mode");
 
-                println!("deserializing callback {:?}", uuid);
-                action.uuid = uuid;
-            } else {
-                unreachable!()
+            let uuid: type_uuid::Bytes =
+                deserialize_from(reader).expect("UUID deserialization failed");
+
+            println!("deserializing callback {:?}", uuid);
+            action.uuid = uuid;
+        }
+
+        let model = self
+            .models
+            .get_mut(&action.uuid)
+            .expect(&format!("action not found {}", action.type_name));
+
+        // Replayer
+        if let Some(reader) = &mut dispatcher.replay_file {
+            let deserialized_action = model.deserialize_from(reader);
+
+            match action.kind {
+                ActionKind::Input => {
+                    // We replay *all* Input actions because we can't generate
+                    // any input actions deterministicaly. The reason is that
+                    // the function pointer in ResultDispatch fields is lost
+                    // during serialization.
+                    action = deserialized_action;
+                }
+                ActionKind::Pure | ActionKind::Output => {
+                    // For debugging purposes we check that the deserialized
+                    // action debugging information matches the one that was
+                    // generated deterministically.
+                    if action.dbginfo != deserialized_action.dbginfo {
+                        panic!(
+                            "Deserialized debug info mismatch:\naction:{:?}\ndeserialized:{:?}",
+                            action.dbginfo, deserialized_action.dbginfo
+                        )
+                    }
+                }
             }
         }
 
-        let Some(model) = self.models.get_mut(&action.uuid) else {
-            panic!("action not found1 {}", action.type_name);
-        };
+        // Recorder: no need to record Pure/Output actions, but for the moment
+        // we record them to ensure that the state-machine works properly.
+        if let Some(writer) = &mut dispatcher.record_file {
+            model.serialize_into(writer, &action)
+        }
 
         match action.kind {
             ActionKind::Pure => model.process_pure(&mut self.state, action, dispatcher),

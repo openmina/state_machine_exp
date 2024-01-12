@@ -1,15 +1,16 @@
-use std::any::Any;
-
+use super::{
+    action::{Action, AnyAction, Dispatcher},
+    state::{ModelState, State},
+};
+use crate::automaton::action::{ActionDebugInfo, SerializableAction};
 use bincode::{deserialize_from, serialize_into};
 use colored::Colorize;
 use log::debug;
 use serde::{Deserialize, Serialize};
-
-use crate::automaton::action::{ActionDebugInfo, SerializableAction};
-
-use super::{
-    action::{AnyAction, Dispatcher},
-    state::{ModelState, State},
+use std::{
+    any::Any,
+    fs::File,
+    io::{BufReader, BufWriter},
 };
 
 // The following code enables polymorphic handling of different *model* types
@@ -59,6 +60,14 @@ impl<Substates: ModelState> AnyModel<Substates> {
     pub fn process_output(&mut self, action: AnyAction, dispatcher: &mut Dispatcher) {
         (self.vtable.process_output)(&mut self.model, action, dispatcher)
     }
+
+    pub fn serialize_into(&mut self, writer: &mut BufWriter<File>, action: &AnyAction) {
+        (self.vtable.serialize_into)(writer, action)
+    }
+
+    pub fn deserialize_from(&mut self, reader: &mut BufReader<File>) -> AnyAction {
+        (self.vtable.deserialize_from)(reader)
+    }
 }
 
 struct ModelVTable<Substates: ModelState> {
@@ -71,6 +80,10 @@ struct ModelVTable<Substates: ModelState> {
     // `Output` actions access the state of the `OutputModel` (external) state
     // but they can't access the state-machine state
     process_output: fn(state: &mut Box<dyn Any>, action: AnyAction, dispatcher: &mut Dispatcher),
+
+    serialize_into: fn(writer: &mut BufWriter<File>, action: &AnyAction),
+
+    deserialize_from: fn(reader: &mut BufReader<File>) -> AnyAction,
 }
 
 pub trait PrivateModel
@@ -83,6 +96,8 @@ where
             process_pure: Self::process_pure,
             process_input: Self::process_input,
             process_output: Self::process_output,
+            serialize_into: Self::serialize_into,
+            deserialize_from: Self::deserialize_from,
         };
         AnyModel { model, vtable }
     }
@@ -93,6 +108,8 @@ where
             process_pure: Self::process_pure,
             process_input: Self::process_input,
             process_output: Self::process_output,
+            serialize_into: Self::serialize_into,
+            deserialize_from: Self::deserialize_from,
         };
         AnyModel { model, vtable }
     }
@@ -116,6 +133,14 @@ where
     fn process_output(_state: &mut Box<dyn Any>, _action: AnyAction, _dispatcher: &mut Dispatcher) {
         unreachable!()
     }
+
+    fn serialize_into(_writer: &mut BufWriter<File>, _action: &AnyAction) {
+        unreachable!()
+    }
+
+    fn deserialize_from(_reader: &mut BufReader<File>) -> AnyAction {
+        unreachable!()
+    }
 }
 
 pub trait PureModel
@@ -124,6 +149,7 @@ where
 {
     type Action: Clone
         + Eq
+        + Action
         + Serialize
         + for<'a> Deserialize<'a>
         + type_uuid::TypeUuid
@@ -150,51 +176,6 @@ impl<T: PureModel> PrivateModel for Pure<T> {
             .ptr
             .downcast::<T::Action>()
             .expect("action not found");
-
-        // Action replay: we don't need to replay pure actions, but we compare
-        // them to the pure actions that were deterministically dispatched by
-        // the state-machine to ensure they always match.
-        if let Some(reader) = &mut dispatcher.replay_file {
-            let uuid: type_uuid::Bytes =
-                deserialize_from(reader).expect("UUID deserialization failed");
-
-            println!("deserializing {:?}", uuid);
-            assert_eq!(uuid, action.uuid);
-
-            let deserialized_action: SerializableAction<T::Action> =
-                deserialize_from(dispatcher.replay_file.as_mut().unwrap())
-                    .expect("Action deserialization failed");
-
-            println!("{:?}", deserialized_action);
-
-            if action.dbginfo != deserialized_action.dbginfo {
-                panic!(
-                    "Deserialized debug info mismatch:\naction:{:?}\ndeserialized:{:?}",
-                    action.dbginfo, deserialized_action.dbginfo
-                )
-            }
-
-            if *downcasted_action.clone() != deserialized_action.action {
-                panic!(
-                    "Deserialized action mismatch:\naction:{:?}\ndeserialized:{:?}",
-                    *downcasted_action, deserialized_action
-                )
-            }
-        }
-
-        // Action recording: we shouldn't need to record pure actions but we
-        // record them to ensure the correct functioning of the state-machine.
-        if let Some(writer) = &mut dispatcher.record_file {
-            serialize_into(writer, &action.uuid).expect("UUID serialization failed");
-            serialize_into(
-                dispatcher.record_file.as_mut().unwrap(),
-                &SerializableAction {
-                    action: *downcasted_action.clone(),
-                    dbginfo: action.dbginfo.clone(),
-                },
-            )
-            .expect("Action serialization failed");
-        }
 
         let ActionDebugInfo {
             location_file,
@@ -229,6 +210,39 @@ impl<T: PureModel> PrivateModel for Pure<T> {
 
         T::process_pure(state, *downcasted_action, dispatcher)
     }
+
+    fn serialize_into(writer: &mut BufWriter<File>, action: &AnyAction) {
+        let downcasted_action = action
+            .ptr
+            .downcast_ref::<T::Action>()
+            .expect("action not found");
+
+        serialize_into(writer.get_mut(), &action.uuid).expect("UUID serialization failed");
+        serialize_into(
+            writer,
+            &SerializableAction {
+                action: downcasted_action.clone(),
+                dbginfo: action.dbginfo.clone(),
+            },
+        )
+        .expect("Action serialization failed");
+    }
+
+    fn deserialize_from(reader: &mut BufReader<File>) -> AnyAction {
+        let uuid: type_uuid::Bytes =
+            deserialize_from(reader.get_mut()).expect("UUID deserialization failed");
+
+        debug!("Deserialized {:?}", uuid);
+
+        let deserialized_action: SerializableAction<T::Action> =
+            deserialize_from(reader).expect("Action deserialization failed");
+
+        debug!("Deserialized {:?}", deserialized_action);
+
+        let mut action: AnyAction = deserialized_action.action.into();
+        action.dbginfo = deserialized_action.dbginfo;
+        action
+    }
 }
 
 pub trait InputModel
@@ -237,6 +251,7 @@ where
 {
     type Action: Clone
         + Eq
+        + Action
         + Serialize
         + for<'a> Deserialize<'a>
         + type_uuid::TypeUuid
@@ -260,37 +275,10 @@ impl<T: InputModel> PrivateModel for Input<T> {
         action: AnyAction,
         dispatcher: &mut Dispatcher,
     ) {
-        // Action replay: we must rebuild the current action with the
-        // information form the replay file. We can't generate input
-        // actions deterministicaly because the ResultDispatch's function
-        // pointer is lost during serialization.
-        let action = dispatcher.replay_file.as_mut().map_or(action, |reader| {
-            let deserialized_action: SerializableAction<T::Action> =
-                deserialize_from(reader).expect("Action deserialization failed");
-
-            println!("{:?}", deserialized_action);
-
-            let mut action: AnyAction = deserialized_action.action.into();
-            action.dbginfo = deserialized_action.dbginfo;
-            action
-        });
-
         let downcasted_action = action
             .ptr
             .downcast::<T::Action>()
             .expect("action not found");
-
-        if let Some(writer) = &mut dispatcher.record_file {
-            serialize_into(writer, &action.uuid).expect("UUID serialization failed");
-            serialize_into(
-                dispatcher.record_file.as_mut().unwrap(),
-                &SerializableAction {
-                    action: *downcasted_action.clone(),
-                    dbginfo: action.dbginfo.clone(),
-                },
-            )
-            .expect("Action serialization failed");
-        }
 
         let ActionDebugInfo {
             location_file,
@@ -319,6 +307,35 @@ impl<T: InputModel> PrivateModel for Input<T> {
         dispatcher.caller = action_id;
         T::process_input(state, *downcasted_action, dispatcher)
     }
+
+    fn serialize_into(writer: &mut BufWriter<File>, action: &AnyAction) {
+        let downcasted_action = action
+            .ptr
+            .downcast_ref::<T::Action>()
+            .expect("action not found");
+
+        serialize_into(writer.get_mut(), &action.uuid).expect("UUID serialization failed");
+        serialize_into(
+            writer,
+            &SerializableAction {
+                action: downcasted_action.clone(),
+                dbginfo: action.dbginfo.clone(),
+            },
+        )
+        .expect("Action serialization failed");
+    }
+
+    fn deserialize_from(reader: &mut BufReader<File>) -> AnyAction {
+        // We don't deserialize the UUID since it is done by the Runner.
+        let deserialized_action: SerializableAction<T::Action> =
+            deserialize_from(reader).expect("Action deserialization failed");
+
+        debug!("Deserialized {:?}", deserialized_action);
+
+        let mut action: AnyAction = deserialized_action.action.into();
+        action.dbginfo = deserialized_action.dbginfo;
+        action
+    }
 }
 
 pub trait OutputModel
@@ -327,6 +344,7 @@ where
 {
     type Action: Clone
         + Eq
+        + Action
         + Serialize
         + for<'a> Deserialize<'a>
         + type_uuid::TypeUuid
@@ -349,51 +367,6 @@ impl<T: OutputModel> PrivateModel for Output<T> {
             .ptr
             .downcast::<T::Action>()
             .expect("action not found");
-
-        // Action replay: we don't need to replay output actions, but we compare
-        // them to the pure actions that were deterministically dispatched by
-        // the state-machine to ensure they always match.
-        if let Some(reader) = &mut dispatcher.replay_file {
-            let uuid: type_uuid::Bytes =
-                deserialize_from(reader).expect("UUID deserialization failed");
-
-            println!("deserializing {:?}", uuid);
-            assert_eq!(uuid, action.uuid);
-
-            let deserialized_action: SerializableAction<T::Action> =
-                deserialize_from(dispatcher.replay_file.as_mut().unwrap())
-                    .expect("Action deserialization failed");
-
-            println!("{:?}", deserialized_action);
-
-            if action.dbginfo != deserialized_action.dbginfo {
-                panic!(
-                    "Deserialized debug info mismatch:\naction:{:?}\ndeserialized:{:?}",
-                    action.dbginfo, deserialized_action.dbginfo
-                )
-            }
-
-            if *downcasted_action.clone() != deserialized_action.action {
-                panic!(
-                    "Deserialized action mismatch:\naction:{:?}\ndeserialized:{:?}",
-                    *downcasted_action, deserialized_action
-                )
-            }
-        }
-
-        // Action recording: we shouldn't need to record Output actions but we
-        // record them to ensure the correct functioning of the state-machine.
-        if let Some(writer) = &mut dispatcher.record_file {
-            serialize_into(writer, &action.uuid).expect("UUID serialization failed");
-            serialize_into(
-                dispatcher.record_file.as_mut().unwrap(),
-                &SerializableAction {
-                    action: *downcasted_action.clone(),
-                    dbginfo: action.dbginfo.clone(),
-                },
-            )
-            .expect("Action serialization failed");
-        }
 
         let ActionDebugInfo {
             location_file,
@@ -419,5 +392,38 @@ impl<T: OutputModel> PrivateModel for Output<T> {
         dispatcher.depth = depth;
         dispatcher.caller = action_id;
         state.0.process_output(*downcasted_action, dispatcher)
+    }
+
+    fn serialize_into(writer: &mut BufWriter<File>, action: &AnyAction) {
+        let downcasted_action = action
+            .ptr
+            .downcast_ref::<T::Action>()
+            .expect("action not found");
+
+        serialize_into(writer.get_mut(), &action.uuid).expect("UUID serialization failed");
+        serialize_into(
+            writer,
+            &SerializableAction {
+                action: downcasted_action.clone(),
+                dbginfo: action.dbginfo.clone(),
+            },
+        )
+        .expect("Action serialization failed");
+    }
+
+    fn deserialize_from(reader: &mut BufReader<File>) -> AnyAction {
+        let uuid: type_uuid::Bytes =
+            deserialize_from(reader.get_mut()).expect("UUID deserialization failed");
+
+        debug!("Deserialized {:?}", uuid);
+
+        let deserialized_action: SerializableAction<T::Action> =
+            deserialize_from(reader).expect("Action deserialization failed");
+
+        debug!("Deserialized {:?}", deserialized_action);
+
+        let mut action: AnyAction = deserialized_action.action.into();
+        action.dbginfo = deserialized_action.dbginfo;
+        action
     }
 }

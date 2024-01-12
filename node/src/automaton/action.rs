@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
     collections::VecDeque,
@@ -11,8 +11,6 @@ use std::{
     rc::Rc,
 };
 use type_uuid::{TypeUuid, TypeUuidDynamic};
-
-use super::model::{InputModel, OutputModel, PureModel};
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum Timeout {
@@ -250,6 +248,10 @@ impl Dispatcher {
         self.replay_file = Some(BufReader::new(
             File::open(filename).expect(&format!("Replayer: failed to open file: {}", filename)),
         ));
+    }
+
+    pub fn is_replayer(&self) -> bool {
+        self.replay_file.is_some()
     }
 
     #[track_caller]

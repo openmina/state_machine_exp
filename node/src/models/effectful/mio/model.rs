@@ -1,10 +1,9 @@
-use super::action::MioOutputAction;
+use super::action::{MioOutputAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
 use super::state::MioState;
 use crate::automaton::action::Dispatcher;
 use crate::automaton::model::{Output, OutputModel};
 use crate::automaton::runner::{RegisterModel, RunnerBuilder};
 use crate::automaton::state::ModelState;
-
 
 // The `MioState` struct, implementing the `OutputModel` trait, provides the
 // interface layer between the state-machine and the MIO crate for asynchronous
@@ -35,46 +34,55 @@ impl OutputModel for MioState {
     fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
             MioOutputAction::PollCreate { poll, on_result } => {
-                dispatcher.dispatch_back(&on_result, (poll, self.poll_create(poll)));
+                // NOTE: use this pattern to inhibit side-effects when in replay mode
+                let result = if dispatcher.is_replayer() {
+                    // This value is ignored and it is replaced by whatever it
+                    // is in the recording file.
+                    Ok(())
+                } else {
+                    self.poll_create(poll)
+                };
+
+                dispatcher.dispatch_back(&on_result, (poll, result));
             }
             MioOutputAction::PollRegisterTcpServer {
                 poll,
                 tcp_listener,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (
-                        tcp_listener,
-                        self.poll_register_tcp_server(&poll, tcp_listener),
-                    ),
-                );
+                let result = if dispatcher.is_replayer() {
+                    Ok(()) // Ignored
+                } else {
+                    self.poll_register_tcp_server(&poll, tcp_listener)
+                };
+
+                dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
             MioOutputAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (
-                        connection,
-                        self.poll_register_tcp_connection(&poll, connection),
-                    ),
-                );
+                let result = if dispatcher.is_replayer() {
+                    Ok(()) // Ignored
+                } else {
+                    self.poll_register_tcp_connection(&poll, connection)
+                };
+
+                dispatcher.dispatch_back(&on_result, (connection, result));
             }
             MioOutputAction::PollDeregisterTcpConnection {
                 poll,
                 connection,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (
-                        connection,
-                        self.poll_deregister_tcp_connection(&poll, connection),
-                    ),
-                );
+                let result = if dispatcher.is_replayer() {
+                    Ok(()) // Ignored
+                } else {
+                    self.poll_deregister_tcp_connection(&poll, connection)
+                };
+
+                dispatcher.dispatch_back(&on_result, (connection, result));
             }
             MioOutputAction::PollEvents {
                 uid,
@@ -83,15 +91,23 @@ impl OutputModel for MioState {
                 timeout,
                 on_result,
             } => {
-                dispatcher
-                    .dispatch_back(&on_result, (uid, self.poll_events(&poll, &events, timeout)));
+                let result = if dispatcher.is_replayer() {
+                    PollResult::Events(Vec::new()) // Ignored
+                } else {
+                    self.poll_events(&poll, &events, timeout)
+                };
+
+                dispatcher.dispatch_back(&on_result, (uid, result));
             }
             MioOutputAction::EventsCreate {
                 uid,
                 capacity,
                 on_result,
             } => {
-                self.events_create(uid, capacity);
+                if !dispatcher.is_replayer() {
+                    self.events_create(uid, capacity);
+                }
+
                 dispatcher.dispatch_back(&on_result, uid);
             }
             MioOutputAction::TcpListen {
@@ -99,36 +115,48 @@ impl OutputModel for MioState {
                 address,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (tcp_listener, self.tcp_listen(tcp_listener, address)),
-                );
+                let result = if dispatcher.is_replayer() {
+                    Ok(()) // Ignored
+                } else {
+                    self.tcp_listen(tcp_listener, address)
+                };
+
+                dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
             MioOutputAction::TcpAccept {
                 connection,
                 tcp_listener,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (connection, self.tcp_accept(connection, &tcp_listener)),
-                );
+                let result = if dispatcher.is_replayer() {
+                    TcpAcceptResult::Success // Ignored
+                } else {
+                    self.tcp_accept(connection, &tcp_listener)
+                };
+
+                dispatcher.dispatch_back(&on_result, (connection, result));
             }
             MioOutputAction::TcpConnect {
                 connection,
                 address,
                 on_result,
             } => {
-                dispatcher.dispatch_back(
-                    &on_result,
-                    (connection, self.tcp_connect(connection, address)),
-                );
+                let result = if dispatcher.is_replayer() {
+                    Ok(()) // Ignored
+                } else {
+                    self.tcp_connect(connection, address)
+                };
+
+                dispatcher.dispatch_back(&on_result, (connection, result));
             }
             MioOutputAction::TcpClose {
                 connection,
                 on_result,
             } => {
-                self.tcp_close(&connection);
+                if !dispatcher.is_replayer() {
+                    self.tcp_close(&connection);
+                }
+
                 dispatcher.dispatch_back(&on_result, connection);
             }
             MioOutputAction::TcpWrite {
@@ -137,7 +165,13 @@ impl OutputModel for MioState {
                 data,
                 on_result,
             } => {
-                dispatcher.dispatch_back(&on_result, (uid, self.tcp_write(&connection_uid, &data)));
+                let result = if dispatcher.is_replayer() {
+                    TcpWriteResult::WrittenAll // Ignored
+                } else {
+                    self.tcp_write(&connection_uid, &data)
+                };
+
+                dispatcher.dispatch_back(&on_result, (uid, result));
             }
             MioOutputAction::TcpRead {
                 uid,
@@ -145,14 +179,25 @@ impl OutputModel for MioState {
                 len,
                 on_result,
             } => {
-                dispatcher.dispatch_back(&on_result, (uid, self.tcp_read(&connection, len)));
+                let result = if dispatcher.is_replayer() {
+                    TcpReadResult::ReadAll(Vec::new()) // Ignored
+                } else {
+                    self.tcp_read(&connection, len)
+                };
+
+                dispatcher.dispatch_back(&on_result, (uid, result));
             }
             MioOutputAction::TcpGetPeerAddress {
                 connection,
                 on_result,
             } => {
-                dispatcher
-                    .dispatch_back(&on_result, (connection, self.tcp_peer_address(&connection)));
+                let result = if dispatcher.is_replayer() {
+                    Ok(String::new()) // Ignored
+                } else {
+                    self.tcp_peer_address(&connection)
+                };
+
+                dispatcher.dispatch_back(&on_result, (connection, result));
             }
         }
     }
