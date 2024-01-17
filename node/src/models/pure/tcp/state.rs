@@ -1,6 +1,4 @@
-use super::action::{
-    ConnectionEvent, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult, TcpPollResult,
-};
+use super::action::{ConnectionEvent, Event, ListenerEvent};
 use crate::{
     automaton::{
         action::{self, ResultDispatch, Timeout, TimeoutAbsolute},
@@ -22,12 +20,12 @@ pub trait EventUpdater {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Listener {
     pub address: String,
-    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    pub on_result: ResultDispatch,
     pub events: Option<ListenerEvent>,
 }
 
 impl Listener {
-    pub fn new(address: String, on_result: ResultDispatch<(Uid, Result<(), String>)>) -> Self {
+    pub fn new(address: String, on_result: ResultDispatch) -> Self {
         Self {
             address,
             on_result,
@@ -76,15 +74,11 @@ impl EventUpdater for Listener {
 pub struct PollRequest {
     pub objects: Vec<Uid>,
     pub timeout: Timeout,
-    pub on_result: ResultDispatch<(Uid, TcpPollResult)>,
+    pub on_result: ResultDispatch,
 }
 
 impl PollRequest {
-    pub fn new(
-        objects: Vec<Uid>,
-        timeout: Timeout,
-        on_result: ResultDispatch<(Uid, TcpPollResult)>,
-    ) -> Self {
+    pub fn new(objects: Vec<Uid>, timeout: Timeout, on_result: ResultDispatch) -> Self {
         Self {
             objects,
             timeout,
@@ -105,7 +99,7 @@ pub enum ConnectionStatus {
     PendingCheck,
     Established,
     CloseRequest {
-        maybe_on_result: Option<ResultDispatch<Uid>>,
+        maybe_on_result: Option<ResultDispatch>,
     },
 }
 
@@ -114,7 +108,7 @@ pub struct Connection {
     pub status: ConnectionStatus,
     pub direction: ConnectionDirection,
     pub timeout: TimeoutAbsolute,
-    pub on_result: ResultDispatch<(Uid, ConnectionResult)>,
+    pub on_result: ResultDispatch,
     pub events: Option<ConnectionEvent>,
 }
 
@@ -122,7 +116,7 @@ impl Connection {
     pub fn new(
         direction: ConnectionDirection,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_result: ResultDispatch,
     ) -> Self {
         let status = match direction {
             ConnectionDirection::Outgoing => ConnectionStatus::Pending,
@@ -203,7 +197,7 @@ pub struct SendRequest {
     pub bytes_sent: usize,
     pub send_on_poll: bool,
     pub timeout: TimeoutAbsolute,
-    pub on_result: ResultDispatch<(Uid, SendResult)>,
+    pub on_result: ResultDispatch,
 }
 
 impl SendRequest {
@@ -212,7 +206,7 @@ impl SendRequest {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: ResultDispatch,
     ) -> Self {
         Self {
             connection,
@@ -232,7 +226,7 @@ pub struct RecvRequest {
     pub bytes_received: usize,
     pub recv_on_poll: bool,
     pub timeout: TimeoutAbsolute,
-    pub on_result: ResultDispatch<(Uid, RecvResult)>,
+    pub on_result: ResultDispatch,
 }
 
 impl RecvRequest {
@@ -241,7 +235,7 @@ impl RecvRequest {
         count: usize,
         recv_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: ResultDispatch,
     ) -> Self {
         Self {
             connection,
@@ -263,13 +257,13 @@ pub enum Status {
     InitPollCreate {
         instance: Uid,
         poll: Uid,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch,
     },
     InitEventsCreate {
         instance: Uid,
         poll: Uid,
         events: Uid,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch,
     },
     Ready {
         instance: Uid,
@@ -304,12 +298,7 @@ impl TcpState {
         matches!(self.status, Status::Ready { .. })
     }
 
-    pub fn new_listener(
-        &mut self,
-        uid: Uid,
-        address: String,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
-    ) {
+    pub fn new_listener(&mut self, uid: Uid, address: String, on_result: ResultDispatch) {
         if self
             .listener_objects
             .insert(uid, Listener::new(address, on_result))
@@ -324,7 +313,7 @@ impl TcpState {
         uid: Uid,
         objects: Vec<Uid>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, TcpPollResult)>,
+        on_result: ResultDispatch,
     ) {
         assert!(objects
             .iter()
@@ -345,7 +334,7 @@ impl TcpState {
         connection: Uid,
         direction: ConnectionDirection,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_result: ResultDispatch,
     ) {
         if self
             .connection_objects
@@ -367,7 +356,7 @@ impl TcpState {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: ResultDispatch,
     ) {
         if self
             .send_request_objects
@@ -388,7 +377,7 @@ impl TcpState {
         count: usize,
         recv_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: ResultDispatch,
     ) {
         if self
             .recv_request_objects

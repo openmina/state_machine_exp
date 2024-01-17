@@ -1,27 +1,24 @@
-use crate::{
-    automaton::{
-        action::ResultDispatch,
-        state::{Objects, Uid},
-    },
-    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult},
+use crate::automaton::{
+    action::ResultDispatch,
+    state::{Objects, Uid},
 };
 
 #[derive(Debug)]
 pub struct Connection {
-    pub on_close_connection: ResultDispatch<Uid>,
-    pub on_result: ResultDispatch<(Uid, ConnectionResult)>,
+    pub on_close_connection: ResultDispatch,
+    pub on_result: ResultDispatch,
 }
 
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, SendResult)>,
+    pub on_result: ResultDispatch,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, RecvResult)>,
+    pub on_result: ResultDispatch,
 }
 
 #[derive(Debug)]
@@ -48,8 +45,8 @@ impl TcpClientState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: ResultDispatch<Uid>,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_close_connection: ResultDispatch,
+        on_result: ResultDispatch,
     ) {
         if self
             .connections
@@ -72,12 +69,7 @@ impl TcpClientState {
             connection
         ));
     }
-    pub fn new_send_request(
-        &mut self,
-        uid: &Uid,
-        connection: Uid,
-        on_result: ResultDispatch<(Uid, SendResult)>,
-    ) {
+    pub fn new_send_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
         if self
             .send_requests
             .insert(
@@ -99,12 +91,7 @@ impl TcpClientState {
             .expect(&format!("Take attempt on inexistent SendRequest {:?}", uid))
     }
 
-    pub fn new_recv_request(
-        &mut self,
-        uid: &Uid,
-        connection: Uid,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
-    ) {
+    pub fn new_recv_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
         if self
             .recv_requests
             .insert(

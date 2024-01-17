@@ -4,11 +4,12 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, ResultDispatch, Timeout},
+        action::{Dispatcher, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
+    callback,
     models::pure::{
         tcp::action::{RecvResult, SendResult, TcpPureAction},
         tcp_server::{action::TcpServerPureAction, state::TcpServerState},
@@ -81,8 +82,8 @@ impl PureModel for EchoServerState {
         if !*ready {
             dispatcher.dispatch(TcpPureAction::Init {
                 instance: state.new_uid(),
-                on_result: ResultDispatch::new(|(instance, result)| {
-                    EchoServerInputAction::InitResult { instance, result }.into()
+                on_result: callback!(|(instance: Uid, result: Result<(), String>)| {
+                    EchoServerInputAction::InitResult { instance, result }
                 }),
             })
         } else {
@@ -91,8 +92,8 @@ impl PureModel for EchoServerState {
             dispatcher.dispatch(TcpServerPureAction::Poll {
                 uid: state.new_uid(),
                 timeout,
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    EchoServerInputAction::PollResult { uid, result }.into()
+                on_result: callback!(|(uid: Uid, result: Result<(), String>)| {
+                    EchoServerInputAction::PollResult { uid, result }
                 }),
             })
         }
@@ -119,14 +120,14 @@ impl InputModel for EchoServerState {
                         server: state.new_uid(),
                         address,
                         max_connections,
-                        on_new_connection: ResultDispatch::new(|(_, connection)| {
-                            EchoServerInputAction::NewConnection { connection }.into()
+                        on_new_connection: callback!(|(_server: Uid, connection: Uid)| {
+                            EchoServerInputAction::NewConnection { connection }
                         }),
-                        on_close_connection: ResultDispatch::new(|(_, connection)| {
-                            EchoServerInputAction::Closed { connection }.into()
+                        on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
+                            EchoServerInputAction::Closed { connection }
                         }),
-                        on_result: ResultDispatch::new(|(server, result)| {
-                            EchoServerInputAction::NewServerResult { server, result }.into()
+                        on_result: callback!(|(server: Uid, result: Result<(), String>)| {
+                            EchoServerInputAction::NewServerResult { server, result }
                         }),
                     });
                 }
@@ -201,8 +202,8 @@ fn receive_data_from_clients<Substate: ModelState>(
             connection,
             count,
             timeout: timeout.clone(),
-            on_result: ResultDispatch::new(|(uid, result)| {
-                EchoServerInputAction::RecvResult { uid, result }.into()
+            on_result: callback!(|(uid: Uid, result: RecvResult)| {
+                EchoServerInputAction::RecvResult { uid, result }
             }),
         });
 
@@ -230,8 +231,8 @@ fn send_back_received_data_to_client(
                     connection,
                     data: data.into(),
                     timeout: Timeout::Millis(100),
-                    on_result: ResultDispatch::new(|(uid, result)| {
-                        EchoServerInputAction::SendResult { uid, result }.into()
+                    on_result: callback!(|(uid: Uid, result: SendResult)| {
+                        EchoServerInputAction::SendResult { uid, result }
                     }),
                 });
             } else {

@@ -1,13 +1,15 @@
-use crate::{
-    automaton::{
-        action::{Dispatcher, ResultDispatch, Timeout, TimeoutAbsolute},
-        model::{InputModel, PureModel},
-        state::{ModelState, State},
-    },
-    models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction},
-};
+use std::time::Duration;
 
 use super::{action::TimePureAction, state::TimeState};
+use crate::{
+    automaton::{
+        action::{Dispatcher, Timeout, TimeoutAbsolute},
+        model::{InputModel, PureModel},
+        state::{ModelState, State, Uid},
+    },
+    callback,
+    models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction},
+};
 
 pub fn update_time<Substate: ModelState>(
     state: &mut State<Substate>,
@@ -65,8 +67,8 @@ impl PureModel for TimeState {
         assert!(matches!(action, TimePureAction::UpdateCurrentTime));
         dispatcher.dispatch(TimeOutputAction::GetSystemTime {
             uid: state.new_uid(),
-            on_result: ResultDispatch::new(|(uid, result)| {
-                TimeInputAction::GetSystemTimeResult { uid, result }.into()
+            on_result: callback!(|(uid: Uid, result: Duration)| {
+                TimeInputAction::GetSystemTimeResult { uid, result }
             }),
         })
     }

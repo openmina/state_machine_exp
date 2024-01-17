@@ -14,33 +14,33 @@ use type_uuid::TypeUuid;
 pub enum TcpPureAction {
     Init {
         instance: Uid,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch,
     },
     Listen {
         tcp_listener: Uid,
         address: String,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch,
     },
     Accept {
         connection: Uid,
         tcp_listener: Uid,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_result: ResultDispatch,
     },
     Connect {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_result: ResultDispatch,
     },
     Close {
         connection: Uid,
-        on_result: ResultDispatch<Uid>,
+        on_result: ResultDispatch,
     },
     Poll {
         uid: Uid,
         objects: Vec<Uid>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, TcpPollResult)>,
+        on_result: ResultDispatch,
     },
     Send {
         uid: Uid,
@@ -51,14 +51,14 @@ pub enum TcpPureAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: ResultDispatch,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: ResultDispatch,
     },
 }
 

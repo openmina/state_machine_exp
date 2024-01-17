@@ -3,7 +3,7 @@ use crate::{
         action::{self, Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
-    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult},
 };
 use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -16,13 +16,13 @@ pub enum TcpClientPureAction {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_close_connection: ResultDispatch<Uid>,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_close_connection: ResultDispatch,
+        on_result: ResultDispatch,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, TcpPollResult)>,
+        on_result: ResultDispatch,
     },
     Close {
         connection: Uid,
@@ -36,14 +36,14 @@ pub enum TcpClientPureAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: ResultDispatch,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: ResultDispatch,
     },
 }
 

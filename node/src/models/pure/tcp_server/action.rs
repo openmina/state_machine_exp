@@ -5,7 +5,7 @@ use crate::{
     },
     models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
 use type_uuid::TypeUuid;
 
@@ -16,14 +16,14 @@ pub enum TcpServerPureAction {
         address: String,
         server: Uid,
         max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
-        on_close_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: ResultDispatch, // (server_uid, new_connection_uid)
+        on_close_connection: ResultDispatch, // (server_uid, connection_uid)
+        on_result: ResultDispatch,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: ResultDispatch,
     },
     Close {
         connection: Uid,
@@ -37,14 +37,14 @@ pub enum TcpServerPureAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: ResultDispatch,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: ResultDispatch,
     },
 }
 

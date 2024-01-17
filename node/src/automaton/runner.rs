@@ -1,9 +1,9 @@
 use super::{
-    action::{ActionKind, AnyAction, Dispatcher, SerializedResultDispatch},
+    action::{ActionKind, AnyAction, Dispatcher},
     model::{AnyModel, Input, InputModel, Output, OutputModel, PrivateModel, Pure, PureModel},
     state::{ModelState, State},
 };
-use bincode::deserialize_from;
+//use bincode::deserialize_from;
 use std::collections::BTreeMap;
 use std::{env, io::Write};
 use type_uuid::TypeUuid;
@@ -119,24 +119,6 @@ impl<Substate: ModelState> Runner<Substate> {
 
     fn process_action(&mut self, mut action: AnyAction, instance: usize) {
         let dispatcher = &mut self.dispatchers[instance];
-
-        // Replayer: this is a special case where we handle actions coming from
-        // calls to a dummy function used in ResultDispatch. In this case we
-        // get the actual action's UUID from the replay file to find the right
-        // model.
-        if action.uuid == SerializedResultDispatch::UUID {
-            let reader = dispatcher
-                .replay_file
-                .as_mut()
-                .expect("SerializedResultDispatch UUID but not in replay mode");
-
-            let uuid: type_uuid::Bytes =
-                deserialize_from(reader).expect("UUID deserialization failed");
-
-            println!("deserializing callback {:?}", uuid);
-            action.uuid = uuid;
-        }
-
         let model = self
             .models
             .get_mut(&action.uuid)

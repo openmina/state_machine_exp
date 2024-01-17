@@ -4,14 +4,17 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, ResultDispatch, Timeout},
+        action::{Dispatcher, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
+    callback,
     models::pure::{
         prng::state::PRNGState,
-        tcp::action::{ConnectResult, ConnectionResult, RecvResult, SendResult, TcpPureAction},
+        tcp::action::{
+            ConnectResult, ConnectionResult, Event, RecvResult, SendResult, TcpPureAction,
+        },
         tcp_client::{action::TcpClientPureAction, state::TcpClientState},
         tests::echo_client::state::{EchoClientConfig, RecvRequest, SendRequest},
         time::model::update_time,
@@ -91,8 +94,8 @@ impl PureModel for EchoClientState {
             // Init TCP model
             dispatcher.dispatch(TcpPureAction::Init {
                 instance: state.new_uid(),
-                on_result: ResultDispatch::new(|(instance, result)| {
-                    EchoClientInputAction::InitResult { instance, result }.into()
+                on_result: callback!(|(instance: Uid, result: Result<(), String>)| {
+                    EchoClientInputAction::InitResult { instance, result }
                 }),
             })
         } else {
@@ -101,8 +104,8 @@ impl PureModel for EchoClientState {
             dispatcher.dispatch(TcpClientPureAction::Poll {
                 uid: state.new_uid(),
                 timeout,
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    EchoClientInputAction::PollResult { uid, result }.into()
+                on_result: callback!(|(uid: Uid, result: Result<Vec<(Uid, Event)>, String>)| {
+                    EchoClientInputAction::PollResult { uid, result }
                 }),
             })
         }
@@ -270,11 +273,11 @@ fn connect(client_state: &EchoClientState, dispatcher: &mut Dispatcher, connecti
         connection,
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
-        on_close_connection: ResultDispatch::new(|connection| {
-            EchoClientInputAction::Closed { connection }.into()
+        on_close_connection: callback!(|connection: Uid| {
+            EchoClientInputAction::Closed { connection }
         }),
-        on_result: ResultDispatch::new(|(connection, result)| {
-            EchoClientInputAction::ConnectResult { connection, result }.into()
+        on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
+            EchoClientInputAction::ConnectResult { connection, result }
         }),
     });
 }
@@ -325,8 +328,8 @@ fn send_random_data_to_server<Substate: ModelState>(
         connection,
         data: request.data.clone(),
         timeout: Timeout::Millis(200),
-        on_result: ResultDispatch::new(|(uid, result)| {
-            EchoClientInputAction::SendResult { uid, result }.into()
+        on_result: callback!(|(uid: Uid, result: SendResult)| {
+            EchoClientInputAction::SendResult { uid, result }
         }),
     });
 
@@ -366,8 +369,8 @@ fn recv_from_server_with_random_timeout<Substate: ModelState>(
         connection,
         count,
         timeout,
-        on_result: ResultDispatch::new(|(uid, result)| {
-            EchoClientInputAction::RecvResult { uid, result }.into()
+        on_result: callback!(|(uid: Uid, result: RecvResult)| {
+            EchoClientInputAction::RecvResult { uid, result }
         }),
     });
 

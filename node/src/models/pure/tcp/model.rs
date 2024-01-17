@@ -1,7 +1,5 @@
 use super::{
-    action::{
-        ConnectResult, ConnectionEvent, RecvResult, TcpInputAction, TcpPollResult, TcpPureAction,
-    },
+    action::{ConnectResult, ConnectionEvent, RecvResult, TcpInputAction, TcpPureAction},
     state::{ConnectionStatus, Listener, RecvRequest, SendRequest, Status, TcpState},
 };
 use crate::{
@@ -11,6 +9,7 @@ use crate::{
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
+    callback,
     models::{
         effectful::mio::{
             action::{MioOutputAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
@@ -266,9 +265,7 @@ fn handle_poll_create_result(
             dispatcher.dispatch(MioOutputAction::EventsCreate {
                 uid: events,
                 capacity: 1024,
-                on_result: ResultDispatch::new(|uid| {
-                    TcpInputAction::EventsCreateResult { uid }.into()
-                }),
+                on_result: callback!(|uid: Uid| TcpInputAction::EventsCreateResult { uid }),
             });
 
             // next state
@@ -298,7 +295,7 @@ fn handle_events_create_result(tcp_state: &mut TcpState, dispatcher: &mut Dispat
         ref on_result,
     } = tcp_state.status
     {
-        dispatcher.dispatch_back(&on_result, (instance, Ok(())));
+        dispatcher.dispatch_back(&on_result, (instance, Ok::<(), String>(())));
 
         tcp_state.status = Status::Ready {
             instance,
@@ -323,12 +320,11 @@ fn handle_listen_result(
         dispatcher.dispatch(MioOutputAction::PollRegisterTcpServer {
             poll,
             tcp_listener,
-            on_result: ResultDispatch::new(|(tcp_listener, result)| {
+            on_result: callback!(|(tcp_listener: Uid, result: Result<(), String>)| {
                 TcpInputAction::RegisterListenerResult {
                     tcp_listener,
                     result,
                 }
-                .into()
             }),
         });
     } else {
@@ -388,8 +384,8 @@ fn handle_accept_result(
             dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
                 poll,
                 connection,
-                on_result: ResultDispatch::new(|(connection, result)| {
-                    TcpInputAction::RegisterConnectionResult { connection, result }.into()
+                on_result: callback!(|(connection: Uid, result: Result<(), String>)| {
+                    TcpInputAction::RegisterConnectionResult { connection, result }
                 }),
             });
         }
@@ -463,9 +459,7 @@ fn handle_register_connection_result(
         };
         dispatcher.dispatch(MioOutputAction::TcpClose {
             connection,
-            on_result: ResultDispatch::new(|connection| {
-                TcpInputAction::CloseResult { connection }.into()
-            }),
+            on_result: callback!(|connection: Uid| TcpInputAction::CloseResult { connection }),
         });
 
         let error = format!("Error registering connection {:?}: {}", connection, error);
@@ -501,9 +495,7 @@ fn handle_deregister_connection_result(
     match result {
         Ok(_) => dispatcher.dispatch(MioOutputAction::TcpClose {
             connection,
-            on_result: ResultDispatch::new(|connection| {
-                TcpInputAction::CloseResult { connection }.into()
-            }),
+            on_result: callback!(|connection: Uid| TcpInputAction::CloseResult { connection }),
         }),
         Err(error) => panic!(
             "Error de-registering connection {:?}: {}",
@@ -535,8 +527,8 @@ fn handle_connect_result(
             dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
                 poll,
                 connection,
-                on_result: ResultDispatch::new(|(connection, result)| {
-                    TcpInputAction::RegisterConnectionResult { connection, result }.into()
+                on_result: callback!(|(connection: Uid, result: Result<(), String>)| {
+                    TcpInputAction::RegisterConnectionResult { connection, result }
                 }),
             });
         }
@@ -588,8 +580,8 @@ fn process_pending_connections(
                 ConnectionStatus::Pending => {
                     dispatcher.dispatch(MioOutputAction::TcpGetPeerAddress {
                         connection: uid,
-                        on_result: ResultDispatch::new(|(connection, result)| {
-                            TcpInputAction::PeerAddressResult { connection, result }.into()
+                        on_result: callback!(|(connection: Uid, result: Result<String, String>)| {
+                            TcpInputAction::PeerAddressResult { connection, result }
                         }),
                     });
                     *status = ConnectionStatus::PendingCheck;
@@ -659,8 +651,8 @@ fn process_pending_send_requests_aux(
                         uid,
                         connection: *connection,
                         data: (&data[*bytes_sent..]).into(),
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            (TcpInputAction::SendResult { uid, result }).into()
+                        on_result: callback!(|(uid: Uid, result: TcpWriteResult)| {
+                            TcpInputAction::SendResult { uid, result }
                         }),
                     });
 
@@ -755,8 +747,8 @@ fn input_pending_recv_requests_aux(
                         uid,
                         connection: *connection_uid,
                         len: data.len().saturating_sub(*bytes_received),
-                        on_result: ResultDispatch::new(|(uid, result)| {
-                            TcpInputAction::RecvResult { uid, result }.into()
+                        on_result: callback!(|(uid: Uid, result: TcpReadResult)| {
+                            TcpInputAction::RecvResult { uid, result }
                         }),
                     });
 
@@ -830,12 +822,15 @@ fn handle_poll_result(
                 })
                 .collect();
 
-            dispatcher.dispatch_back(&request.on_result, (uid, Ok(events)));
+            dispatcher.dispatch_back(
+                &request.on_result,
+                (uid, Ok::<Vec<(Uid, Event)>, String>(events)),
+            );
             tcp_state.remove_poll_request(&uid)
         }
         PollResult::Error(err) => {
             let PollRequest { on_result, .. } = tcp_state.get_poll_request(&uid);
-            dispatcher.dispatch_back(&on_result, (uid, Err(err)));
+            dispatcher.dispatch_back(&on_result, (uid, Err::<(), String>(err)));
             tcp_state.remove_poll_request(&uid)
         }
         PollResult::Interrupted => {
@@ -850,8 +845,8 @@ fn handle_poll_result(
                 poll,
                 events,
                 timeout: timeout.clone(),
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    TcpInputAction::PollResult { uid, result }.into()
+                on_result: callback!(|(uid: Uid, result: PollResult)| {
+                    TcpInputAction::PollResult { uid, result }
                 }),
             })
         }
@@ -879,8 +874,8 @@ fn dispatch_send(
                 uid,
                 connection: *connection,
                 data: (&data[*bytes_sent..]).into(),
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    TcpInputAction::SendResult { uid, result }.into()
+                on_result: callback!(|(uid: Uid, result: TcpWriteResult)| {
+                    TcpInputAction::SendResult { uid, result }
                 }),
             });
         }
@@ -1021,8 +1016,8 @@ fn dispatch_recv(
                 uid,
                 connection: *connection,
                 len: data.len().saturating_sub(*bytes_received),
-                on_result: ResultDispatch::new(|(uid, result)| {
-                    TcpInputAction::RecvResult { uid, result }.into()
+                on_result: callback!(|(uid: Uid, result: TcpReadResult)| {
+                    TcpInputAction::RecvResult { uid, result }
                 }),
             });
         }
@@ -1201,7 +1196,7 @@ fn init(
     dispatcher: &mut Dispatcher,
     instance: Uid,
     poll: Uid,
-    on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    on_result: ResultDispatch,
 ) {
     tcp_state.status = Status::InitPollCreate {
         instance,
@@ -1210,8 +1205,8 @@ fn init(
     };
     dispatcher.dispatch(MioOutputAction::PollCreate {
         poll,
-        on_result: ResultDispatch::new(|(poll, result)| {
-            TcpInputAction::PollCreateResult { poll, result }.into()
+        on_result: callback!(|(poll: Uid, result: Result<(), String>)| {
+            TcpInputAction::PollCreateResult { poll, result }
         }),
     });
 }
@@ -1221,7 +1216,7 @@ fn listen(
     dispatcher: &mut Dispatcher,
     tcp_listener: Uid,
     address: String,
-    on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    on_result: ResultDispatch,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1229,12 +1224,11 @@ fn listen(
     dispatcher.dispatch(MioOutputAction::TcpListen {
         tcp_listener,
         address,
-        on_result: ResultDispatch::new(|(tcp_listener, result)| {
+        on_result: callback!(|(tcp_listener: Uid, result: Result<(), String>)| {
             TcpInputAction::ListenResult {
                 tcp_listener,
                 result,
             }
-            .into()
         }),
     });
 }
@@ -1244,7 +1238,7 @@ fn accept(
     dispatcher: &mut Dispatcher,
     connection: Uid,
     tcp_listener: Uid,
-    on_result: ResultDispatch<(Uid, ConnectionResult)>,
+    on_result: ResultDispatch,
 ) {
     assert!(tcp_state.is_ready());
     assert!(matches!(
@@ -1257,8 +1251,8 @@ fn accept(
     dispatcher.dispatch(MioOutputAction::TcpAccept {
         connection,
         tcp_listener,
-        on_result: ResultDispatch::new(|(connection, result)| {
-            TcpInputAction::AcceptResult { connection, result }.into()
+        on_result: callback!(|(connection: Uid, result: TcpAcceptResult)| {
+            TcpInputAction::AcceptResult { connection, result }
         }),
     });
 }
@@ -1269,7 +1263,7 @@ fn connect(
     connection: Uid,
     address: String,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch<(Uid, ConnectionResult)>,
+    on_result: ResultDispatch,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1282,8 +1276,8 @@ fn connect(
     dispatcher.dispatch(MioOutputAction::TcpConnect {
         connection,
         address,
-        on_result: ResultDispatch::new(|(connection, result)| {
-            TcpInputAction::ConnectResult { connection, result }.into()
+        on_result: callback!(|(connection: Uid, result: Result<(), String>)| {
+            TcpInputAction::ConnectResult { connection, result }
         }),
     });
 }
@@ -1292,7 +1286,7 @@ fn close(
     tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     connection: Uid,
-    on_result: ResultDispatch<Uid>,
+    on_result: ResultDispatch,
 ) {
     let Status::Ready { poll, .. } = tcp_state.status else {
         unreachable!()
@@ -1308,8 +1302,8 @@ fn close(
     dispatcher.dispatch(MioOutputAction::PollDeregisterTcpConnection {
         poll,
         connection,
-        on_result: ResultDispatch::new(|(connection, result)| {
-            TcpInputAction::DeregisterConnectionResult { connection, result }.into()
+        on_result: callback!(|(connection: Uid, result: Result<(), String>)| {
+            TcpInputAction::DeregisterConnectionResult { connection, result }
         }),
     });
 }
@@ -1320,7 +1314,7 @@ fn poll(
     uid: Uid,
     objects: Vec<Uid>,
     timeout: Timeout,
-    on_result: ResultDispatch<(Uid, TcpPollResult)>,
+    on_result: ResultDispatch,
 ) {
     let Status::Ready { poll, events, .. } = tcp_state.status else {
         unreachable!()
@@ -1332,8 +1326,8 @@ fn poll(
         poll,
         events,
         timeout,
-        on_result: ResultDispatch::new(|(uid, result)| {
-            TcpInputAction::PollResult { uid, result }.into()
+        on_result: callback!(|(uid: Uid, result: PollResult)| {
+            TcpInputAction::PollResult { uid, result }
         }),
     })
 }
@@ -1345,7 +1339,7 @@ fn send(
     connection: Uid,
     data: Rc<[u8]>,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch<(Uid, SendResult)>,
+    on_result: ResultDispatch,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1385,7 +1379,7 @@ fn recv(
     connection: Uid,
     count: usize,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch<(Uid, RecvResult)>,
+    on_result: ResultDispatch,
 ) {
     assert!(tcp_state.is_ready());
 

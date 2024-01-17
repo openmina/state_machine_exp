@@ -1,3 +1,4 @@
+use linkme::distributed_slice;
 use serde::{Deserialize, Serialize};
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -10,7 +11,7 @@ use std::{
     panic::Location,
     rc::Rc,
 };
-use type_uuid::{TypeUuid, TypeUuidDynamic};
+use type_uuid::TypeUuidDynamic;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum Timeout {
@@ -126,55 +127,22 @@ pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug +
     pub dbginfo: ActionDebugInfo,
 }
 
-// This is a special action used for replaying purposes.
-// When serializing a ResultDispatch field we lose the function pointer used to
-// produce the resulting InputAction, so when deserializing we will build a
-// dummy function that returns `SerializedResultDispatch` action.
-// When the callback is dispatched the process function will deserialize the
-// correct action from the replay file.
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "47a5f477-8715-4968-8823-4334114cd252"]
-pub struct SerializedResultDispatch();
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct ResultDispatch(pub String);
 
-impl Action for SerializedResultDispatch {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Input
+impl ResultDispatch {
+    pub fn make<T: 'static>(&self, result: T) -> AnyAction {
+        for (name, fun) in CALLBACKS {
+            if name == &self.0 {
+                return fun(std::any::type_name::<T>(), Box::new(result));
+            }
+        }
+
+        panic!("callback function {} not found", self.0)
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct ResultDispatch<R: Clone>(fn(R) -> AnyAction);
-
-impl<'de, R: Clone + Deserialize<'de>> Deserialize<'de> for ResultDispatch<R> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Deserialize::deserialize(deserializer)?; // deserialize ()
-        Ok(Self(|_| SerializedResultDispatch().into()))
-    }
-}
-
-impl<R: Clone + Serialize> Serialize for ResultDispatch<R> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_unit()
-    }
-}
-
-impl<R: Clone> ResultDispatch<R> {
-    pub fn new(ptr: fn(R) -> AnyAction) -> Self {
-        Self(ptr)
-    }
-
-    pub fn make(&self, value: R) -> AnyAction {
-        self.0(value)
-    }
-}
-
-impl<R: Clone> fmt::Debug for ResultDispatch<R> {
+impl fmt::Debug for ResultDispatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "...")
     }
@@ -279,16 +247,12 @@ impl Dispatcher {
     }
 
     #[track_caller]
-    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch<R>, result: R)
+    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch, result: R)
     where
         R: Sized + 'static,
     {
         let location = Location::caller();
-        let mut any_action = if self.is_replayer() {
-            SerializedResultDispatch().into()
-        } else {
-            on_result.make(result)
-        };
+        let mut any_action = on_result.make(result);
 
         assert!(matches!(any_action.kind, ActionKind::Input));
 
@@ -302,4 +266,46 @@ impl Dispatcher {
         self.action_id += 1;
         self.queue.push_back(any_action);
     }
+}
+
+#[distributed_slice]
+pub static CALLBACKS: [(&str, fn(&str, Box<dyn Any>) -> AnyAction)];
+
+#[macro_export]
+macro_rules! _callback {
+    ($gensym:ident, $arg:tt, $arg_type:ty, $body:expr) => {{
+        use crate::automaton::action::ResultDispatch;
+        use crate::automaton::action::{AnyAction, CALLBACKS};
+        use linkme::distributed_slice;
+
+        paste::paste! {
+            fn $gensym(call_type: &str, args: Box<dyn std::any::Any>) -> AnyAction {
+                #[distributed_slice(CALLBACKS)]
+                static CALLBACK_DESERIALIZE: (&str, fn(&str, Box<dyn std::any::Any>) -> AnyAction) = (
+                    stringify!($gensym),
+                    $gensym,
+                );
+
+                let $arg = *args.downcast::<$arg_type>()
+                    .expect(&format!(
+                        "Invalid argument type: {}, expected: {}",
+                        call_type,
+                        stringify!($arg_type)));
+                        
+                ($body).into()
+            }
+        }
+
+        ResultDispatch(stringify!($gensym).to_string())
+    }};
+}
+
+#[macro_export]
+macro_rules! callback {
+    (|($($var:ident : $typ:ty),+)| $body:expr) => {
+        gensym::gensym! { crate::_callback!(($($var),+), ($($typ),+), $body) }
+    };
+    (|$var:ident : $typ:ty| $body:expr) => {
+        gensym::gensym! { crate::_callback!($var, $typ, $body) }
+    };
 }
