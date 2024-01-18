@@ -58,75 +58,180 @@ impl RegisterModel for TcpState {
     }
 }
 
-impl InputModel for TcpState {
-    type Action = TcpInputAction;
+enum Act {
+    In(TcpInputAction),
+    Pure(TcpPureAction),
+}
 
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        match action {
-            TcpInputAction::PollCreateResult { result, .. } => {
-                let events_uid = state.new_uid();
-                handle_poll_create_result(state.substate_mut(), dispatcher, events_uid, result)
-            }
-            TcpInputAction::EventsCreateResult { .. } => {
-                handle_events_create_result(state.substate_mut(), dispatcher)
-            }
-            TcpInputAction::ListenResult {
-                tcp_listener,
-                result,
-            } => handle_listen_result(state.substate_mut(), dispatcher, tcp_listener, result),
-            TcpInputAction::AcceptResult { connection, result } => {
-                handle_accept_result(state.substate_mut(), dispatcher, connection, result)
-            }
-            TcpInputAction::ConnectResult { connection, result } => {
-                handle_connect_result(state.substate_mut(), dispatcher, connection, result)
-            }
-            TcpInputAction::CloseResult { connection } => {
-                handle_close_result(state.substate_mut(), dispatcher, connection)
-            }
-            TcpInputAction::RegisterConnectionResult { connection, result } => {
-                handle_register_connection_result(
-                    state.substate_mut(),
-                    dispatcher,
-                    connection,
-                    result,
-                )
-            }
-            TcpInputAction::DeregisterConnectionResult { connection, result } => {
-                handle_deregister_connection_result(
-                    state.substate_mut(),
-                    dispatcher,
-                    connection,
-                    result,
-                )
-            }
-            TcpInputAction::RegisterListenerResult {
-                tcp_listener: listener,
-                result,
-            } => {
-                handle_register_listener_result(state.substate_mut(), dispatcher, listener, result)
-            }
-            TcpInputAction::PollResult { uid, result } => {
-                let current_time = get_current_time(state);
+fn process_action<Substate: ModelState>(
+    state: &mut State<Substate>,
+    action: Act,
+    dispatcher: &mut Dispatcher,
+) {
+    match action {
+        Act::Pure(TcpPureAction::Init {
+            instance,
+            on_result,
+        }) => {
+            let poll = state.new_uid();
+            let tcp_state = state.substate_mut();
 
-                handle_poll_result(state.substate_mut(), dispatcher, current_time, uid, result)
-            }
-            TcpInputAction::SendResult { uid, result } => {
-                let current_time = get_current_time(state);
+            init(tcp_state, dispatcher, instance, poll, on_result)
+        }
+        // dispatched from init()
+        Act::In(TcpInputAction::PollCreateResult { result, .. }) => {
+            let events_uid = state.new_uid();
+            let tcp_state = state.substate_mut();
 
-                handle_send_result(state.substate_mut(), dispatcher, current_time, uid, result)
-            }
-            TcpInputAction::RecvResult { uid, result } => {
-                let current_time = get_current_time(state);
+            handle_poll_create_result(tcp_state, dispatcher, events_uid, result)
+        }
+        // dispatched from handle_poll_create_result()
+        Act::In(TcpInputAction::EventsCreateResult { .. }) => {
+            let tcp_state = state.substate_mut();
 
-                handle_recv_result(state.substate_mut(), dispatcher, current_time, uid, result)
-            }
-            TcpInputAction::PeerAddressResult { connection, result } => {
-                handle_peer_address_result(state.substate_mut(), dispatcher, connection, result)
-            }
+            handle_events_create_result(tcp_state, dispatcher)
+        }
+        Act::Pure(TcpPureAction::Listen {
+            tcp_listener,
+            address,
+            on_result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            listen(tcp_state, dispatcher, tcp_listener, address, on_result)
+        }
+        Act::In(TcpInputAction::ListenResult {
+            tcp_listener,
+            result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_listen_result(tcp_state, dispatcher, tcp_listener, result)
+        }
+        // dispatched from handle_listen_result()
+        Act::In(TcpInputAction::RegisterListenerResult {
+            tcp_listener,
+            result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_register_listener_result(tcp_state, dispatcher, tcp_listener, result)
+        }
+        Act::Pure(TcpPureAction::Accept {
+            connection,
+            tcp_listener,
+            on_result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            accept(tcp_state, dispatcher, connection, tcp_listener, on_result)
+        }
+        Act::In(TcpInputAction::AcceptResult { connection, result }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_accept_result(tcp_state, dispatcher, connection, result)
+        }
+        Act::Pure(TcpPureAction::Connect {
+            connection,
+            address,
+            timeout,
+            on_result,
+        }) => {
+            let timeout = get_timeout_absolute(state, timeout);
+            let tcp_state = state.substate_mut();
+
+            connect(
+                tcp_state, dispatcher, connection, address, timeout, on_result,
+            )
+        }
+        Act::In(TcpInputAction::ConnectResult { connection, result }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_connect_result(tcp_state, dispatcher, connection, result)
+        }
+        // dispatched from: handle_accept_result(), handle_connect_result()
+        Act::In(TcpInputAction::RegisterConnectionResult { connection, result }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_register_connection_result(tcp_state, dispatcher, connection, result)
+        }
+        Act::Pure(TcpPureAction::Close {
+            connection,
+            on_result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            close(tcp_state, dispatcher, connection, on_result)
+        }
+        Act::In(TcpInputAction::CloseResult { connection }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_close_result(tcp_state, dispatcher, connection)
+        }
+        // dispatched from close()
+        Act::In(TcpInputAction::DeregisterConnectionResult { connection, result }) => {
+            handle_deregister_connection_result(dispatcher, connection, result)
+        }
+        Act::Pure(TcpPureAction::Poll {
+            uid,
+            objects,
+            timeout,
+            on_result,
+        }) => {
+            let tcp_state = state.substate_mut();
+
+            poll(tcp_state, dispatcher, uid, objects, timeout, on_result)
+        }
+        Act::In(TcpInputAction::PollResult { uid, result }) => {
+            let current_time = get_current_time(state);
+            let tcp_state = state.substate_mut();
+
+            handle_poll_result(tcp_state, dispatcher, current_time, uid, result)
+        }
+        // dispatched from handle_poll_result() -> process_pending_connections()
+        Act::In(TcpInputAction::PeerAddressResult { connection, result }) => {
+            let tcp_state = state.substate_mut();
+
+            handle_peer_address_result(tcp_state, dispatcher, connection, result)
+        }
+        Act::Pure(TcpPureAction::Send {
+            uid,
+            connection,
+            data,
+            timeout,
+            on_result,
+        }) => {
+            let timeout = get_timeout_absolute(state, timeout);
+            let tcp_state = state.substate_mut();
+
+            send(
+                tcp_state, dispatcher, uid, connection, data, timeout, on_result,
+            )
+        }
+        Act::In(TcpInputAction::SendResult { uid, result }) => {
+            let current_time = get_current_time(state);
+            let tcp_state = state.substate_mut();
+
+            handle_send_result(tcp_state, dispatcher, current_time, uid, result)
+        }
+        Act::Pure(TcpPureAction::Recv {
+            uid,
+            connection,
+            count,
+            timeout,
+            on_result,
+        }) => {
+            let timeout = get_timeout_absolute(state, timeout);
+            let tcp_state = state.substate_mut();
+
+            recv(
+                tcp_state, dispatcher, uid, connection, count, timeout, on_result,
+            )
+        }
+        Act::In(TcpInputAction::RecvResult { uid, result }) => {
+            let current_time = get_current_time(state);
+
+            handle_recv_result(state.substate_mut(), dispatcher, current_time, uid, result)
         }
     }
 }
@@ -139,110 +244,19 @@ impl PureModel for TcpState {
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        match action {
-            TcpPureAction::Init {
-                instance,
-                on_result,
-            } => {
-                let poll = state.new_uid();
+        process_action(state, Act::Pure(action), dispatcher)
+    }
+}
 
-                init(state.substate_mut(), dispatcher, instance, poll, on_result)
-            }
-            TcpPureAction::Listen {
-                tcp_listener,
-                address,
-                on_result,
-            } => listen(
-                state.substate_mut(),
-                dispatcher,
-                tcp_listener,
-                address,
-                on_result,
-            ),
-            TcpPureAction::Accept {
-                connection,
-                tcp_listener,
-                on_result,
-            } => accept(
-                state.substate_mut(),
-                dispatcher,
-                connection,
-                tcp_listener,
-                on_result,
-            ),
-            TcpPureAction::Connect {
-                connection,
-                address,
-                timeout,
-                on_result,
-            } => {
-                let timeout = get_timeout_absolute(state, timeout);
+impl InputModel for TcpState {
+    type Action = TcpInputAction;
 
-                connect(
-                    state.substate_mut(),
-                    dispatcher,
-                    connection,
-                    address,
-                    timeout,
-                    on_result,
-                )
-            }
-            TcpPureAction::Close {
-                connection,
-                on_result,
-            } => close(state.substate_mut(), dispatcher, connection, on_result),
-            TcpPureAction::Poll {
-                uid,
-                objects,
-                timeout,
-                on_result,
-            } => poll(
-                state.substate_mut(),
-                dispatcher,
-                uid,
-                objects,
-                timeout,
-                on_result,
-            ),
-            TcpPureAction::Send {
-                uid,
-                connection,
-                data,
-                timeout,
-                on_result,
-            } => {
-                let timeout = get_timeout_absolute(state, timeout);
-
-                send(
-                    state.substate_mut(),
-                    dispatcher,
-                    uid,
-                    connection,
-                    data,
-                    timeout,
-                    on_result,
-                )
-            }
-            TcpPureAction::Recv {
-                uid,
-                connection,
-                count,
-                timeout,
-                on_result,
-            } => {
-                let timeout = get_timeout_absolute(state, timeout);
-
-                recv(
-                    state.substate_mut(),
-                    dispatcher,
-                    uid,
-                    connection,
-                    count,
-                    timeout,
-                    on_result,
-                )
-            }
-        }
+    fn process_input<Substate: ModelState>(
+        state: &mut State<Substate>,
+        action: Self::Action,
+        dispatcher: &mut Dispatcher,
+    ) {
+        process_action(state, Act::In(action), dispatcher)
     }
 }
 
@@ -339,15 +353,15 @@ fn handle_listen_result(
 fn handle_register_listener_result(
     tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
-    listener: Uid,
+    tcp_listener: Uid,
     result: Result<(), String>,
 ) {
-    let Listener { on_result, .. } = tcp_state.get_listener(&listener);
+    let Listener { on_result, .. } = tcp_state.get_listener(&tcp_listener);
 
-    dispatcher.dispatch_back(&on_result, (listener, result.clone()));
+    dispatcher.dispatch_back(&on_result, (tcp_listener, result.clone()));
 
     if result.is_err() {
-        tcp_state.remove_listener(&listener)
+        tcp_state.remove_listener(&tcp_listener)
     }
 }
 
@@ -487,7 +501,6 @@ fn handle_register_connection_result(
 }
 
 fn handle_deregister_connection_result(
-    _tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     connection: Uid,
     result: Result<(), String>,
