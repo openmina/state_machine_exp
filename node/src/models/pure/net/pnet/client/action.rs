@@ -1,17 +1,16 @@
 use crate::{
     automaton::{
-        action::{self, Action, ActionKind, ResultDispatch, Timeout},
+        action::{Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
-    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult},
+    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult},
 };
 use serde_derive::{Deserialize, Serialize};
-use std::rc::Rc;
 use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "f15cd869-0966-4ab5-881c-530bc0fe95e6"]
-pub enum TcpClientPureAction {
+#[uuid = "1a161896-de5f-46b2-8774-e60e8a34ef9f"]
+pub enum PnetClientPureAction {
     Connect {
         connection: Uid,
         address: String,
@@ -30,11 +29,7 @@ pub enum TcpClientPureAction {
     Send {
         uid: Uid,
         connection: Uid,
-        #[serde(
-            serialize_with = "action::serialize_rc_bytes",
-            deserialize_with = "action::deserialize_rc_bytes"
-        )]
-        data: Rc<[u8]>,
+        data: Vec<u8>,
         timeout: Timeout,
         on_result: ResultDispatch,
     },
@@ -47,25 +42,29 @@ pub enum TcpClientPureAction {
     },
 }
 
-impl Action for TcpClientPureAction {
+impl Action for PnetClientPureAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure
     }
 }
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "830b3ab4-d5c9-44f3-9366-7486bb5b52b2"]
-pub enum TcpClientInputAction {
+#[uuid = "f315283b-258d-4b62-8d3a-ecfd2d0f3c9f"]
+pub enum PnetClientInputAction {
     ConnectResult {
         connection: Uid,
         result: ConnectionResult,
     },
-    CloseResult {
-        connection: Uid,
-    },
-    SendResult {
+    SendNonceResult {
         uid: Uid,
         result: SendResult,
+    },
+    RecvNonceResult {
+        uid: Uid,
+        result: RecvResult,
+    },
+    Closed {
+        connection: Uid,
     },
     RecvResult {
         uid: Uid,
@@ -73,7 +72,7 @@ pub enum TcpClientInputAction {
     },
 }
 
-impl Action for TcpClientInputAction {
+impl Action for PnetClientInputAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Input
     }

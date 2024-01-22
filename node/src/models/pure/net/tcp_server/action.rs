@@ -3,7 +3,7 @@ use crate::{
         action::{self, Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
-    models::pure::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
 };
 use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -70,11 +70,9 @@ pub enum TcpServerInputAction {
         connection: Uid,
         result: ConnectionResult,
     },
-    CloseInternalResult {
-        connection: Uid,
-    },
     CloseResult {
         connection: Uid,
+        notify: bool,
     },
     SendResult {
         uid: Uid,

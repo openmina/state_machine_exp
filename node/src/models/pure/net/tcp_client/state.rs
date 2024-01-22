@@ -69,6 +69,7 @@ impl TcpClientState {
             connection
         ));
     }
+
     pub fn new_send_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
         if self
             .send_requests
@@ -110,6 +111,6 @@ impl TcpClientState {
     pub fn take_recv_request(&mut self, uid: &Uid) -> RecvRequest {
         self.recv_requests
             .remove(uid)
-            .expect(&format!("Take attempt on inexistent SendRequest {:?}", uid))
+            .expect(&format!("Take attempt on inexistent RecvRequest {:?}", uid))
     }
 }

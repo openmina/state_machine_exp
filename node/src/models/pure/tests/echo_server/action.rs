@@ -3,7 +3,7 @@ use crate::{
         action::{Action, ActionKind},
         state::Uid,
     },
-    models::pure::tcp::action::{RecvResult, SendResult},
+    models::pure::net::tcp::action::{RecvResult, SendResult},
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;

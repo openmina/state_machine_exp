@@ -11,11 +11,11 @@ use crate::{
     },
     callback,
     models::pure::{
-        tcp::{
+        net::tcp::{
             action::{ConnectionResult, RecvResult, SendResult, TcpPureAction},
             state::TcpState,
         },
-        tcp_client::state::Connection,
+        net::tcp_client::state::Connection,
     },
 };
 
@@ -85,18 +85,24 @@ fn process_action<Substate: ModelState>(
             dispatcher.dispatch(TcpPureAction::Close {
                 connection,
                 on_result: callback!(|connection: Uid| {
-                    TcpClientInputAction::CloseResult { connection }
+                    TcpClientInputAction::CloseResult {
+                        connection,
+                        notify: true,
+                    }
                 }),
             })
         }
-        Act::In(TcpClientInputAction::CloseResult { connection }) => {
+        Act::In(TcpClientInputAction::CloseResult { connection, notify }) => {
             let client_state: &mut TcpClientState = state.substate_mut();
             let Connection {
                 on_close_connection,
                 ..
             } = client_state.get_connection(&connection);
 
-            dispatcher.dispatch_back(&on_close_connection, connection);
+            if notify {
+                dispatcher.dispatch_back(&on_close_connection, connection);
+            }
+
             client_state.remove_connection(&connection);
         }
         Act::Pure(TcpClientPureAction::Send {
@@ -132,7 +138,10 @@ fn process_action<Substate: ModelState>(
                 dispatcher.dispatch(TcpPureAction::Close {
                     connection,
                     on_result: callback!(|connection: Uid| {
-                        TcpClientInputAction::CloseResult { connection }
+                        TcpClientInputAction::CloseResult {
+                            connection,
+                            notify: true,
+                        }
                     }),
                 });
             }
@@ -172,7 +181,10 @@ fn process_action<Substate: ModelState>(
                 dispatcher.dispatch(TcpPureAction::Close {
                     connection,
                     on_result: callback!(|connection: Uid| {
-                        TcpClientInputAction::CloseResult { connection }
+                        TcpClientInputAction::CloseResult {
+                            connection,
+                            notify: true,
+                        }
                     }),
                 });
             }

@@ -11,8 +11,8 @@ use crate::{
     },
     callback,
     models::pure::{
-        tcp::action::{RecvResult, SendResult, TcpPureAction},
-        tcp_server::{action::TcpServerPureAction, state::TcpServerState},
+        net::tcp::action::{RecvResult, SendResult, TcpPureAction},
+        net::tcp_server::{action::TcpServerPureAction, state::TcpServerState},
         tests::echo_server::state::Connection,
         time::model::update_time,
     },

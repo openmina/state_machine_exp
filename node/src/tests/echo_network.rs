@@ -6,9 +6,9 @@ use crate::{
     },
     models::pure::{
         prng::state::{PRNGConfig, PRNGState},
-        tcp::state::TcpState,
-        tcp_client::state::TcpClientState,
-        tcp_server::state::TcpServerState,
+        net::tcp::state::TcpState,
+        net::tcp_client::state::TcpClientState,
+        net::tcp_server::state::TcpServerState,
         tests::{
             echo_client::{
                 action::EchoClientTickAction,

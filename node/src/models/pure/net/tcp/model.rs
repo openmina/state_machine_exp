@@ -16,7 +16,7 @@ use crate::{
             state::MioState,
         },
         pure::{
-            tcp::{
+            net::tcp::{
                 action::{AcceptResult, ConnectionResult, Event, ListenerEvent, SendResult},
                 state::{Connection, ConnectionDirection, EventUpdater, PollRequest},
             },

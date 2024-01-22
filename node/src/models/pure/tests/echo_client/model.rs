@@ -12,10 +12,10 @@ use crate::{
     callback,
     models::pure::{
         prng::state::PRNGState,
-        tcp::action::{
+        net::tcp::action::{
             ConnectResult, ConnectionResult, Event, RecvResult, SendResult, TcpPureAction,
         },
-        tcp_client::{action::TcpClientPureAction, state::TcpClientState},
+        net::tcp_client::{action::TcpClientPureAction, state::TcpClientState},
         tests::echo_client::state::{EchoClientConfig, RecvRequest, SendRequest},
         time::model::update_time,
     },

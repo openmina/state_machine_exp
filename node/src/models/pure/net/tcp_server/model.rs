@@ -10,7 +10,7 @@ use crate::{
         state::{ModelState, State, Uid},
     },
     callback,
-    models::pure::tcp::{
+    models::pure::net::tcp::{
         action::{
             AcceptResult, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult,
             TcpPollResult, TcpPureAction,
@@ -133,7 +133,10 @@ fn process_action<Substate: ModelState>(
                     dispatcher.dispatch(TcpPureAction::Close {
                         connection,
                         on_result: callback!(|connection: Uid| {
-                            TcpServerInputAction::CloseInternalResult { connection }
+                            TcpServerInputAction::CloseResult {
+                                connection,
+                                notify: false,
+                            }
                         }),
                     })
                 }
@@ -153,27 +156,26 @@ fn process_action<Substate: ModelState>(
                 }
             }
         }
-        Act::In(TcpServerInputAction::CloseInternalResult { connection }) => {
-            let (_, server) = state
-                .substate_mut::<TcpServerState>()
-                .get_connection_server_mut(&connection);
-
-            server.remove_connection(&connection);
-        }
         Act::Pure(TcpServerPureAction::Close { connection }) => {
             dispatcher.dispatch(TcpPureAction::Close {
                 connection,
                 on_result: callback!(|connection: Uid| {
-                    TcpServerInputAction::CloseResult { connection }
+                    TcpServerInputAction::CloseResult {
+                        connection,
+                        notify: true,
+                    }
                 }),
             })
         }
-        Act::In(TcpServerInputAction::CloseResult { connection }) => {
+        Act::In(TcpServerInputAction::CloseResult { connection, notify }) => {
             let (&uid, server) = state
                 .substate_mut::<TcpServerState>()
                 .get_connection_server_mut(&connection);
 
-            dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
+            if notify {
+                dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
+            }
+
             server.remove_connection(&connection);
         }
         Act::Pure(TcpServerPureAction::Send {
@@ -209,7 +211,10 @@ fn process_action<Substate: ModelState>(
                 dispatcher.dispatch(TcpPureAction::Close {
                     connection,
                     on_result: callback!(|connection: Uid| {
-                        TcpServerInputAction::CloseResult { connection }
+                        TcpServerInputAction::CloseResult {
+                            connection,
+                            notify: true,
+                        }
                     }),
                 });
             }
@@ -249,7 +254,10 @@ fn process_action<Substate: ModelState>(
                 dispatcher.dispatch(TcpPureAction::Close {
                     connection,
                     on_result: callback!(|connection: Uid| {
-                        TcpServerInputAction::CloseResult { connection }
+                        TcpServerInputAction::CloseResult {
+                            connection,
+                            notify: true,
+                        }
                     }),
                 });
             }
@@ -282,8 +290,6 @@ impl PureModel for TcpServerState {
         process_action(state, Act::Pure(action), dispatcher)
     }
 }
-
-
 
 fn handle_poll_result(
     server_state: &mut TcpServerState,
@@ -336,4 +342,3 @@ fn handle_poll_result(
 
     accept_list
 }
-
