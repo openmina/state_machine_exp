@@ -1,5 +1,7 @@
 use super::{
-    action::{ConnectResult, ConnectionEvent, RecvResult, TcpInputAction, TcpPureAction},
+    action::{
+        ConnectResult, ConnectionEvent, RecvResult, TcpInputAction, TcpPollResult, TcpPureAction,
+    },
     state::{ConnectionStatus, Listener, RecvRequest, SendRequest, Status, TcpState},
 };
 use crate::{
@@ -843,7 +845,7 @@ fn handle_poll_result(
         }
         PollResult::Error(err) => {
             let PollRequest { on_result, .. } = tcp_state.get_poll_request(&uid);
-            dispatcher.dispatch_back(&on_result, (uid, Err::<(), String>(err)));
+            dispatcher.dispatch_back(&on_result, (uid, Err(err)));
             tcp_state.remove_poll_request(&uid)
         }
         PollResult::Interrupted => {
@@ -1229,7 +1231,7 @@ fn init(
     dispatcher: &mut Dispatcher,
     instance: Uid,
     poll: Uid,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     tcp_state.status = Status::InitPollCreate {
         instance,
@@ -1249,7 +1251,7 @@ fn listen(
     dispatcher: &mut Dispatcher,
     tcp_listener: Uid,
     address: String,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, Result<(), String>)>,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1271,7 +1273,7 @@ fn accept(
     dispatcher: &mut Dispatcher,
     connection: Uid,
     tcp_listener: Uid,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, ConnectionResult)>,
 ) {
     assert!(tcp_state.is_ready());
     assert!(matches!(
@@ -1296,7 +1298,7 @@ fn connect(
     connection: Uid,
     address: String,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, ConnectionResult)>,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1319,7 +1321,7 @@ fn close(
     tcp_state: &mut TcpState,
     dispatcher: &mut Dispatcher,
     connection: Uid,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<Uid>,
 ) {
     let Status::Ready { poll, .. } = tcp_state.status else {
         unreachable!()
@@ -1347,7 +1349,7 @@ fn poll(
     uid: Uid,
     objects: Vec<Uid>,
     timeout: Timeout,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, TcpPollResult)>,
 ) {
     let Status::Ready { poll, events, .. } = tcp_state.status else {
         unreachable!()
@@ -1372,7 +1374,7 @@ fn send(
     connection: Uid,
     data: Rc<[u8]>,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, SendResult)>,
 ) {
     assert!(tcp_state.is_ready());
 
@@ -1412,7 +1414,7 @@ fn recv(
     connection: Uid,
     count: usize,
     timeout: TimeoutAbsolute,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, RecvResult)>,
 ) {
     assert!(tcp_state.is_ready());
 

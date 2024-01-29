@@ -26,53 +26,53 @@ use type_uuid::TypeUuid;
 pub enum MioOutputAction {
     PollCreate {
         poll: Uid,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     PollRegisterTcpServer {
         poll: Uid,         // created by PollCreate
         tcp_listener: Uid, // created by TcpListen
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     PollRegisterTcpConnection {
         poll: Uid,       // created by PollCreate
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     PollDeregisterTcpConnection {
         poll: Uid,       // created by PollCreate
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     PollEvents {
         uid: Uid,    // passed back to call-back action to identify the request
         poll: Uid,   // created by PollCreate
         events: Uid, // created by EventsCreate
         timeout: Timeout,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, PollResult)>,
     },
     EventsCreate {
         uid: Uid,
         capacity: usize,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<Uid>,
     },
     TcpListen {
         tcp_listener: Uid,
         address: String,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     TcpAccept {
         connection: Uid,
         tcp_listener: Uid, // created by TcpListen
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, TcpAcceptResult)>,
     },
     TcpConnect {
         connection: Uid,
         address: String,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     },
     TcpClose {
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<Uid>,
     },
     TcpWrite {
         uid: Uid,        // passed back to call-back action to identify the request
@@ -85,17 +85,17 @@ pub enum MioOutputAction {
             deserialize_with = "action::deserialize_rc_bytes"
         )]
         data: Rc<[u8]>,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, TcpWriteResult)>,
     },
     TcpRead {
         uid: Uid,        // passed back to call-back action to identify the request
         connection: Uid, // created by TcpAccept/TcpConnect
         len: usize,      // max number of bytes to read
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, TcpReadResult)>,
     },
     TcpGetPeerAddress {
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, Result<String, String>)>,
     },
 }
 

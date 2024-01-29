@@ -5,6 +5,7 @@ use crate::{
     },
     models::pure::net::{
         pnet::common::{ConnectionState, PnetKey},
+        tcp::action::{ConnectResult, RecvResult},
         tcp_client::state::RecvRequest,
     },
 };
@@ -12,15 +13,15 @@ use crate::{
 #[derive(Debug)]
 pub struct Connection {
     pub state: ConnectionState,
-    pub on_close_connection: ResultDispatch,
-    pub on_result: ResultDispatch,
+    pub on_close_connection: ResultDispatch<Uid>,
+    pub on_result: ResultDispatch<(Uid, ConnectResult)>,
 }
 
 #[derive(Debug)]
 pub struct PnetClientConfig {
     pub pnet_key: PnetKey,
     pub send_nonce_timeout: Timeout,
-    pub recv_nonce_timeout: Timeout
+    pub recv_nonce_timeout: Timeout,
 }
 
 #[derive(Debug)]
@@ -69,8 +70,8 @@ impl PnetClientState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_close_connection: ResultDispatch<Uid>,
+        on_result: ResultDispatch<(Uid, ConnectResult)>,
     ) {
         if self
             .connections
@@ -95,7 +96,12 @@ impl PnetClientState {
         ));
     }
 
-    pub fn new_recv_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
+    pub fn new_recv_request(
+        &mut self,
+        uid: &Uid,
+        connection: Uid,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
+    ) {
         if self
             .recv_requests
             .insert(

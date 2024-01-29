@@ -5,6 +5,7 @@ use crate::{
     },
     models::pure::net::{
         pnet::common::{ConnectionState, PnetKey},
+        tcp::action::RecvResult,
         tcp_server::state::RecvRequest,
     },
 };
@@ -16,17 +17,17 @@ pub struct Connection {
 
 #[derive(Debug)]
 pub struct Server {
-    pub on_new_connection: ResultDispatch,
-    pub on_close_connection: ResultDispatch,
-    pub on_result: ResultDispatch,
+    pub on_new_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_close_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
     pub connections: Objects<Connection>,
 }
 
 impl Server {
     pub fn new(
-        on_new_connection: ResultDispatch,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
             on_new_connection,
@@ -45,7 +46,7 @@ impl Server {
 pub struct PnetServerConfig {
     pub pnet_key: PnetKey,
     pub send_nonce_timeout: Timeout,
-    pub recv_nonce_timeout: Timeout
+    pub recv_nonce_timeout: Timeout,
 }
 
 #[derive(Debug)]
@@ -67,9 +68,9 @@ impl PnetServerState {
     pub fn new_server(
         &mut self,
         server: Uid,
-        on_new_connection: ResultDispatch,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) {
         if self
             .server_objects
@@ -142,7 +143,7 @@ impl PnetServerState {
                     ConnectionState::Init => false,
                     ConnectionState::NonceSent { send_request, .. } => send_request == uid,
                     ConnectionState::NonceWait { recv_request, .. } => recv_request == uid,
-                    ConnectionState::Ready { .. } => false
+                    ConnectionState::Ready { .. } => false,
                 },
             );
 
@@ -164,7 +165,12 @@ impl PnetServerState {
         server
     }
 
-    pub fn new_recv_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
+    pub fn new_recv_request(
+        &mut self,
+        uid: &Uid,
+        connection: Uid,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
+    ) {
         if self
             .recv_requests
             .insert(

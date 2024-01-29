@@ -1,24 +1,27 @@
-use crate::automaton::{
-    action::ResultDispatch,
-    state::{Objects, Uid},
+use crate::{
+    automaton::{
+        action::ResultDispatch,
+        state::{Objects, Uid},
+    },
+    models::pure::net::tcp::action::{RecvResult, SendResult},
 };
 use std::{collections::BTreeSet, mem};
 
 #[derive(Debug)]
 pub struct Server {
     pub max_connections: usize,
-    pub on_new_connection: ResultDispatch,
-    pub on_close_connection: ResultDispatch,
-    pub on_result: ResultDispatch,
+    pub on_new_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_close_connection: ResultDispatch<(Uid, Uid)>,
+    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
     pub connections: BTreeSet<Uid>,
 }
 
 impl Server {
     pub fn new(
         max_connections: usize,
-        on_new_connection: ResultDispatch,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) -> Self {
         Self {
             max_connections,
@@ -37,18 +40,18 @@ impl Server {
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch,
+    pub on_result: ResultDispatch<(Uid, SendResult)>,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch,
+    pub on_result: ResultDispatch<(Uid, RecvResult)>,
 }
 
 #[derive(Debug)]
 pub struct PollRequest {
-    pub on_result: ResultDispatch,
+    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
 }
 
 #[derive(Debug)]
@@ -78,7 +81,12 @@ impl TcpServerState {
         mem::take(&mut self.poll_request).expect("Take attempt on inexistent PollRequest")
     }
 
-    pub fn new_send_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
+    pub fn new_send_request(
+        &mut self,
+        uid: &Uid,
+        connection: Uid,
+        on_result: ResultDispatch<(Uid, SendResult)>,
+    ) {
         if self
             .send_requests
             .insert(
@@ -100,7 +108,12 @@ impl TcpServerState {
             .expect(&format!("Take attempt on inexistent SendRequest {:?}", uid))
     }
 
-    pub fn new_recv_request(&mut self, uid: &Uid, connection: Uid, on_result: ResultDispatch) {
+    pub fn new_recv_request(
+        &mut self,
+        uid: &Uid,
+        connection: Uid,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
+    ) {
         if self
             .recv_requests
             .insert(
@@ -139,9 +152,9 @@ impl TcpServerState {
         &mut self,
         server: Uid,
         max_connections: usize,
-        on_new_connection: ResultDispatch,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_new_connection: ResultDispatch<(Uid, Uid)>,
+        on_close_connection: ResultDispatch<(Uid, Uid)>,
+        on_result: ResultDispatch<(Uid, Result<(), String>)>,
     ) {
         if self
             .server_objects

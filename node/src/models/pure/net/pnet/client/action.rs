@@ -3,7 +3,9 @@ use crate::{
         action::{Action, ActionKind, ResultDispatch, Timeout},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult},
+    models::pure::net::tcp::action::{
+        ConnectResult, RecvResult, SendResult, TcpPollResult,
+    },
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
@@ -15,13 +17,13 @@ pub enum PnetClientPureAction {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_close_connection: ResultDispatch,
-        on_result: ResultDispatch,
+        on_close_connection: ResultDispatch<Uid>,
+        on_result: ResultDispatch<(Uid, ConnectResult)>,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, TcpPollResult)>,
     },
     Close {
         connection: Uid,
@@ -31,14 +33,14 @@ pub enum PnetClientPureAction {
         connection: Uid,
         data: Vec<u8>,
         timeout: Timeout,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch,
+        on_result: ResultDispatch<(Uid, RecvResult)>,
     },
 }
 
@@ -53,7 +55,7 @@ impl Action for PnetClientPureAction {
 pub enum PnetClientInputAction {
     ConnectResult {
         connection: Uid,
-        result: ConnectionResult,
+        result: ConnectResult,
     },
     SendNonceResult {
         uid: Uid,

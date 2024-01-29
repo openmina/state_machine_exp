@@ -72,22 +72,18 @@ fn process_action<Substate: ModelState>(
                     PnetClientInputAction::Closed { connection }
                 }),
                 on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
+                    let ConnectionResult::Outgoing(result) = result else { unreachable!() };
                     PnetClientInputAction::ConnectResult { connection, result }
                 }),
             })
         }
-        Act::In(PnetClientInputAction::ConnectResult { connection, result }) => {
-            let ConnectionResult::Outgoing(result) = result else {
-                unreachable!()
-            };
-
-            match result {
-                ConnectResult::Success => send_nonce(state, connection, dispatcher),
-                ConnectResult::Timeout | ConnectResult::Error(_) => {
-                    handle_connect_error(state, connection, result, dispatcher)
-                }
+        Act::In(PnetClientInputAction::ConnectResult { connection, result }) => match result {
+            ConnectResult::Success => send_nonce(state, connection, dispatcher),
+            ConnectResult::Timeout | ConnectResult::Error(_) => {
+                println!("conenct result {:?}", result);
+                handle_connect_error(state, connection, result, dispatcher)
             }
-        }
+        },
         Act::In(PnetClientInputAction::SendNonceResult { uid, result }) => match result {
             SendResult::Success => recv_nonce(state, uid, dispatcher),
             SendResult::Timeout => handle_handshake_timeout(state, uid, dispatcher),
@@ -204,6 +200,7 @@ fn handle_connect_error<Substate: ModelState>(
 ) {
     let client_state = state.substate_mut::<PnetClientState>();
     let Connection { on_result, .. } = client_state.get_connection(&connection);
+    println!("handle_connect_error {:?}", connection);
 
     dispatcher.dispatch_back(on_result, (connection, result.clone()));
     client_state.remove_connection(&connection);
@@ -275,6 +272,7 @@ fn handle_handshake_timeout<Substate: ModelState>(
     uid: Uid,
     dispatcher: &mut Dispatcher,
 ) {
+    println!("handle_handshake_timeout {:?}", uid);
     let client_state = state.substate_mut::<PnetClientState>();
     let (&connection, Connection { on_result, .. }) =
         client_state.find_connection_by_nonce_request(&uid);
@@ -289,6 +287,7 @@ fn handle_connection_closed(
     connection: Uid,
     dispatcher: &mut Dispatcher,
 ) {
+    println!("handle_connection_closed {:?}", connection);
     let conn = client_state.get_connection(&connection);
 
     match conn.state {
@@ -325,7 +324,7 @@ fn encrypt_and_send<Substate: ModelState>(
     connection: Uid,
     data: Vec<u8>,
     timeout: Timeout,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, SendResult)>,
     dispatcher: &mut Dispatcher,
 ) {
     let conn = state

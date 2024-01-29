@@ -3,7 +3,7 @@ use crate::{
         action::{Action, ActionKind},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::{ConnectResult, RecvResult, SendResult, TcpPollResult},
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
@@ -27,7 +27,7 @@ pub enum PnetEchoClientInputAction {
     },
     ConnectResult {
         connection: Uid,
-        result: ConnectionResult,
+        result: ConnectResult,
     },
     Closed {
         connection: Uid,

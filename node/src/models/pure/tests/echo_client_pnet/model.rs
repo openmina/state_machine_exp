@@ -13,7 +13,7 @@ use crate::{
     models::pure::{
         net::pnet::client::{action::PnetClientPureAction, state::PnetClientState},
         net::tcp::action::{
-            ConnectResult, ConnectionResult, Event, RecvResult, SendResult, TcpPureAction,
+            ConnectResult, Event, RecvResult, SendResult, TcpPureAction,
         },
         prng::state::PRNGState,
         tests::echo_client_pnet::state::RecvRequest,
@@ -91,10 +91,6 @@ impl InputModel for PnetEchoClientState {
                 Err(error) => panic!("Client initialization failed: {}", error),
             },
             PnetEchoClientInputAction::ConnectResult { connection, result } => {
-                let ConnectionResult::Outgoing(result) = result else {
-                    unreachable!()
-                };
-
                 match result {
                     ConnectResult::Success => {
                         let client_state: &mut PnetEchoClientState = state.substate_mut();
@@ -238,7 +234,7 @@ fn connect(client_state: &PnetEchoClientState, dispatcher: &mut Dispatcher, conn
         on_result: callback!(|(connection: Uid, result: ConnectResult)| {
             PnetEchoClientInputAction::ConnectResult {
                 connection,
-                result: ConnectionResult::Outgoing(result)
+                result
             }
         }),
     });

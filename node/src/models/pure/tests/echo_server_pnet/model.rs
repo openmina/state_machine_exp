@@ -83,7 +83,7 @@ impl InputModel for PnetEchoServerState {
                         server: state.new_uid(),
                         address,
                         max_connections,
-                        on_new_connection: callback!(|connection: Uid| {
+                        on_new_connection: callback!(|(_server: Uid, connection: Uid)| {
                             PnetEchoServerInputAction::NewConnection { connection }
                         }),
                         on_close_connection: callback!(|(_server: Uid, connection: Uid)| {

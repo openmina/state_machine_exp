@@ -264,7 +264,7 @@ fn complete_connection<Substate: ModelState>(
         on_new_connection, ..
     } = server_state.get_server(&server);
 
-    dispatcher.dispatch_back(&on_new_connection, connection);
+    dispatcher.dispatch_back(&on_new_connection, (server, connection));
 }
 
 fn handle_handshake_timeout<Substate: ModelState>(
@@ -310,7 +310,7 @@ fn encrypt_and_send<Substate: ModelState>(
     connection: Uid,
     data: Vec<u8>,
     timeout: Timeout,
-    on_result: ResultDispatch,
+    on_result: ResultDispatch<(Uid, SendResult)>,
     dispatcher: &mut Dispatcher,
 ) {
     let server_state = state.substate_mut::<PnetServerState>();

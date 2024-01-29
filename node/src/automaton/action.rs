@@ -128,21 +128,32 @@ pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug +
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct ResultDispatch(pub String);
+pub struct ResultDispatch<R> {
+    pub fun_name: String,
+    #[serde(skip)]
+    result_type: std::marker::PhantomData<R>,
+}
 
-impl ResultDispatch {
+impl<R> ResultDispatch<R> {
+    pub fn new(name: &str) -> Self {
+        Self {
+            fun_name: name.to_string(),
+            result_type: Default::default()
+        }
+    }
+
     pub fn make<T: 'static>(&self, result: T) -> AnyAction {
         for (name, fun) in CALLBACKS {
-            if name == &self.0 {
+            if name == &self.fun_name {
                 return fun(std::any::type_name::<T>(), Box::new(result));
             }
         }
 
-        panic!("callback function {} not found", self.0)
+        panic!("callback function {} not found", self.fun_name)
     }
 }
 
-impl fmt::Debug for ResultDispatch {
+impl<R> fmt::Debug for ResultDispatch<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "...")
     }
@@ -247,7 +258,7 @@ impl Dispatcher {
     }
 
     #[track_caller]
-    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch, result: R)
+    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch<R>, result: R)
     where
         R: Sized + 'static,
     {
@@ -296,7 +307,7 @@ macro_rules! _callback {
             }
         }
 
-        ResultDispatch(stringify!($gensym).to_string())
+        ResultDispatch::<$arg_type>::new(stringify!($gensym))
     }};
 }
 
