@@ -5,10 +5,10 @@ use crate::{
         state::ModelState,
     },
     models::pure::{
-        prng::state::{PRNGConfig, PRNGState},
         net::tcp::state::TcpState,
         net::tcp_client::state::TcpClientState,
         net::tcp_server::state::TcpServerState,
+        prng::state::{PRNGConfig, PRNGState},
         tests::{
             echo_client::{
                 action::EchoClientTickAction,
@@ -117,7 +117,7 @@ fn echo_server_n_clients(n_clients: u64) {
                 address: "127.0.0.1:8888".to_string(),
                 max_connections: n_clients as usize,
                 poll_timeout: 100 / n_clients,
-                recv_timeout: 500,
+                recv_timeout: 500 * n_clients,
             })),
             || EchoServerTickAction().into(),
         );

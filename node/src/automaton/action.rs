@@ -291,7 +291,7 @@ macro_rules! _callback {
                         "Invalid argument type: {}, expected: {}",
                         call_type,
                         stringify!($arg_type)));
-                        
+
                 ($body).into()
             }
         }

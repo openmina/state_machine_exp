@@ -879,9 +879,15 @@ fn dispatch_send(
         on_result,
         ..
     } = tcp_state.get_send_request(&uid);
-    let event = tcp_state.get_connection(connection).events();
 
-    match event {
+    let conn = tcp_state.get_connection(connection);
+
+    if conn.events.is_none() {
+        *set_send_on_poll = true;
+        return false;
+    }
+
+    match conn.events() {
         ConnectionEvent::Ready { can_send: true, .. } => {
             dispatcher.dispatch(MioOutputAction::TcpWrite {
                 uid,
@@ -934,21 +940,25 @@ fn handle_send_result(
 
     // We need to redispatch if the previous send was incomplete/interrupted.
     if !completed {
-        let ConnectionEvent::Ready {
-            can_send: can_send_mut,
-            ..
-        } = tcp_state.get_connection_mut(&connection).events_mut()
-        else {
-            unreachable!()
-        };
+        let conn = tcp_state.get_connection_mut(&connection);
 
-        *can_send_mut = can_send;
+        if conn.events.is_some() {
+            let ConnectionEvent::Ready {
+                can_send: can_send_mut,
+                ..
+            } = conn.events_mut()
+            else {
+                unreachable!()
+            };
 
-        let mut set_send_on_poll = false;
-        remove_request = dispatch_send(tcp_state, dispatcher, uid, &mut set_send_on_poll);
+            *can_send_mut = can_send;
 
-        let SendRequest { send_on_poll, .. } = tcp_state.get_send_request_mut(&uid);
-        *send_on_poll = set_send_on_poll;
+            let mut set_send_on_poll = false;
+            remove_request = dispatch_send(tcp_state, dispatcher, uid, &mut set_send_on_poll);
+
+            let SendRequest { send_on_poll, .. } = tcp_state.get_send_request_mut(&uid);
+            *send_on_poll = set_send_on_poll;
+        }
     }
 
     if remove_request {
@@ -1021,9 +1031,15 @@ fn dispatch_recv(
         on_result,
         ..
     } = tcp_state.get_recv_request(&uid);
-    let event = tcp_state.get_connection(connection).events();
 
-    match event {
+    let conn = tcp_state.get_connection(connection);
+
+    if conn.events.is_none() {
+        *set_recv_on_poll = true;
+        return false;
+    }
+
+    match conn.events() {
         ConnectionEvent::Ready { can_recv: true, .. } => {
             dispatcher.dispatch(MioOutputAction::TcpRead {
                 uid,
@@ -1079,21 +1095,25 @@ fn handle_recv_result(
 
     // We need to redispatch if the previous recv was incomplete/interrupted.
     if !completed {
-        let ConnectionEvent::Ready {
-            can_recv: can_recv_mut,
-            ..
-        } = tcp_state.get_connection_mut(&connection).events_mut()
-        else {
-            unreachable!()
-        };
+        let conn = tcp_state.get_connection_mut(&connection);
 
-        *can_recv_mut = can_recv;
+        if conn.events.is_some() {
+            let ConnectionEvent::Ready {
+                can_recv: can_recv_mut,
+                ..
+            } = conn.events_mut()
+            else {
+                unreachable!()
+            };
 
-        let mut set_recv_on_poll = false;
-        remove_request = dispatch_recv(tcp_state, dispatcher, uid, &mut set_recv_on_poll);
+            *can_recv_mut = can_recv;
 
-        let RecvRequest { recv_on_poll, .. } = tcp_state.get_recv_request_mut(&uid);
-        *recv_on_poll = set_recv_on_poll;
+            let mut set_recv_on_poll = false;
+            remove_request = dispatch_recv(tcp_state, dispatcher, uid, &mut set_recv_on_poll);
+
+            let RecvRequest { recv_on_poll, .. } = tcp_state.get_recv_request_mut(&uid);
+            *recv_on_poll = set_recv_on_poll;
+        }
     }
 
     if remove_request {

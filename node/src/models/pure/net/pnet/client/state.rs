@@ -1,90 +1,13 @@
 use crate::{
     automaton::{
-        action::ResultDispatch,
+        action::{ResultDispatch, Timeout},
         state::{Objects, Uid},
     },
-    models::pure::net::tcp_client::state::RecvRequest,
+    models::pure::net::{
+        pnet::common::{ConnectionState, PnetKey},
+        tcp_client::state::RecvRequest,
+    },
 };
-use std::{
-    fmt,
-    ops::{Deref, DerefMut},
-};
-
-use salsa20::{cipher::generic_array::GenericArray, cipher::KeyIvInit, XSalsa20};
-
-#[derive(Debug)]
-pub struct PnetKey(pub [u8; 32]);
-
-impl PnetKey {
-    pub fn new(chain_id: &str) -> Self {
-        use blake2::{
-            digest::{generic_array, Update, VariableOutput},
-            Blake2bVar,
-        };
-
-        let mut key = generic_array::GenericArray::default();
-        Blake2bVar::new(32)
-            .expect("valid constant")
-            .chain(b"/coda/0.0.1/")
-            .chain(chain_id.as_bytes())
-            .finalize_variable(&mut key)
-            .expect("good buffer size");
-        Self(key.into())
-    }
-}
-
-//#[derive(Clone)]
-pub struct XSalsa20Wrapper {
-    inner: XSalsa20,
-}
-
-impl XSalsa20Wrapper {
-    pub fn new(shared_secret: &[u8; 32], nonce: &[u8; 24]) -> Self {
-        XSalsa20Wrapper {
-            inner: XSalsa20::new(
-                GenericArray::from_slice(shared_secret),
-                GenericArray::from_slice(nonce),
-            ),
-        }
-    }
-}
-
-impl Deref for XSalsa20Wrapper {
-    type Target = XSalsa20;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl DerefMut for XSalsa20Wrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
-impl fmt::Debug for XSalsa20Wrapper {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("XSalsa20").finish()
-    }
-}
-
-#[derive(Debug)]
-pub enum ConnectionState {
-    Init,
-    NonceSent {
-        send_request: Uid,
-        nonce: [u8; 24],
-    },
-    NonceWait {
-        recv_request: Uid,
-        nonce_sent: [u8; 24],
-    },
-    Ready {
-        send_cipher: XSalsa20Wrapper,
-        recv_cipher: XSalsa20Wrapper,
-    },
-}
 
 #[derive(Debug)]
 pub struct Connection {
@@ -96,6 +19,8 @@ pub struct Connection {
 #[derive(Debug)]
 pub struct PnetClientConfig {
     pub pnet_key: PnetKey,
+    pub send_nonce_timeout: Timeout,
+    pub recv_nonce_timeout: Timeout
 }
 
 #[derive(Debug)]
@@ -130,10 +55,10 @@ impl PnetClientState {
         self.connections
             .iter()
             .find(|(_connection, Connection { state, .. })| match state {
-                ConnectionState::Init => unreachable!(),
+                ConnectionState::Init => false,
                 ConnectionState::NonceSent { send_request, .. } => send_request == uid,
                 ConnectionState::NonceWait { recv_request, .. } => recv_request == uid,
-                ConnectionState::Ready { .. } => unreachable!(),
+                ConnectionState::Ready { .. } => false,
             })
             .expect(&format!(
                 "No connection object with nonce request {:?}",
