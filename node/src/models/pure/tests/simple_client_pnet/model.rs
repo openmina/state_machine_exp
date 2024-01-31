@@ -108,7 +108,7 @@ impl PureModel for SimpleClientState {
                     )
                 }
             },
-            SimpleClientAction::Closed { connection } => {
+            SimpleClientAction::CloseEvent { connection } => {
                 info!("|PNET_CLIENT| connection {:?} closed", connection);
                 dispatcher.halt()
             }
@@ -241,7 +241,7 @@ fn connect(client_state: &SimpleClientState, dispatcher: &mut Dispatcher, connec
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
         on_close_connection: callback!(|connection: Uid| {
-            SimpleClientAction::Closed { connection }
+            SimpleClientAction::CloseEvent { connection }
         }),
         on_result: callback!(|(connection: Uid, result: ConnectResult)| {
             SimpleClientAction::ConnectResult {

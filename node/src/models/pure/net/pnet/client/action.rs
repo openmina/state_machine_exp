@@ -30,7 +30,7 @@ pub enum PnetClientAction {
     Close {
         connection: Uid,
     },
-    Closed {
+    CloseEvent {
         connection: Uid,
     },
     Send {
@@ -44,7 +44,6 @@ pub enum PnetClientAction {
         uid: Uid,
         result: SendResult,
     },
-
     Recv {
         uid: Uid,
         connection: Uid,

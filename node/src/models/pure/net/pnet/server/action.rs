@@ -23,7 +23,7 @@ pub enum PnetServerAction {
         server: Uid,
         result: OrError<()>,
     },
-    NewConnection {
+    NewConnectionEvent {
         server: Uid,
         connection: Uid,
     },
@@ -35,7 +35,7 @@ pub enum PnetServerAction {
     Close {
         connection: Uid,
     },
-    Closed {
+    CloseEvent {
         connection: Uid,
     },
     Send {

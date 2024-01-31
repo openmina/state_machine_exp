@@ -20,7 +20,7 @@ pub enum PnetEchoClientAction {
         connection: Uid,
         result: ConnectResult,
     },
-    Closed {
+    CloseEvent {
         connection: Uid,
     },
     PollResult {

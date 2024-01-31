@@ -109,7 +109,7 @@ impl PureModel for PnetEchoClientState {
                     )
                 }
             },
-            PnetEchoClientAction::Closed { connection } => {
+            PnetEchoClientAction::CloseEvent { connection } => {
                 info!("|ECHO_CLIENT| connection {:?} closed", connection);
 
                 let connection = state.new_uid();
@@ -216,7 +216,7 @@ fn connect(client_state: &PnetEchoClientState, dispatcher: &mut Dispatcher, conn
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
         on_close_connection: callback!(|connection: Uid| {
-            PnetEchoClientAction::Closed { connection }
+            PnetEchoClientAction::CloseEvent { connection }
         }),
         on_result: callback!(|(connection: Uid, result: ConnectResult)| {
             PnetEchoClientAction::ConnectResult {

@@ -59,7 +59,6 @@ impl RegisterModel for EchoServerState {
     }
 }
 
-
 impl PureModel for EchoServerState {
     type Action = EchoServerAction;
 
@@ -107,10 +106,10 @@ impl PureModel for EchoServerState {
                         address,
                         max_connections,
                         on_new_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            EchoServerAction::NewConnection { connection }
+                            EchoServerAction::NewConnectionEvent { connection }
                         }),
                         on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            EchoServerAction::Closed { connection }
+                            EchoServerAction::CloseEvent { connection }
                         }),
                         on_result: callback!(|(server: Uid, result: OrError<()>)| {
                             EchoServerAction::NewServerResult { server, result }
@@ -126,13 +125,13 @@ impl PureModel for EchoServerState {
                 }
                 Err(error) => panic!("Server initialization failed: {}", error),
             },
-            EchoServerAction::NewConnection { connection } => {
+            EchoServerAction::NewConnectionEvent { connection } => {
                 info!("|ECHO_SERVER| new connection {:?}", connection);
                 state
                     .substate_mut::<EchoServerState>()
                     .new_connection(connection)
             }
-            EchoServerAction::Closed { connection } => {
+            EchoServerAction::CloseEvent { connection } => {
                 info!("|ECHO_SERVER| connection {:?} closed", connection);
                 state
                     .substate_mut::<EchoServerState>()

@@ -70,10 +70,10 @@ impl PureModel for PnetEchoServerState {
                         address,
                         max_connections,
                         on_new_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            PnetEchoServerAction::NewConnection { connection }
+                            PnetEchoServerAction::NewConnectionEvent { connection }
                         }),
                         on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            PnetEchoServerAction::Closed { connection }
+                            PnetEchoServerAction::CloseEvent { connection }
                         }),
                         on_result: callback!(|(server: Uid, result: OrError<()>)| {
                             PnetEchoServerAction::NewServerResult { server, result }
@@ -89,13 +89,13 @@ impl PureModel for PnetEchoServerState {
                 }
                 Err(error) => panic!("Server initialization failed: {}", error),
             },
-            PnetEchoServerAction::NewConnection { connection } => {
+            PnetEchoServerAction::NewConnectionEvent { connection } => {
                 info!("|ECHO_SERVER| new connection {:?}", connection);
                 state
                     .substate_mut::<PnetEchoServerState>()
                     .new_connection(connection)
             }
-            PnetEchoServerAction::Closed { connection } => {
+            PnetEchoServerAction::CloseEvent { connection } => {
                 info!("|ECHO_SERVER| connection {:?} closed", connection);
                 state
                     .substate_mut::<PnetEchoServerState>()

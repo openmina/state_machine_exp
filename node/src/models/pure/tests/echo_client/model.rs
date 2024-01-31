@@ -154,7 +154,7 @@ impl PureModel for EchoClientState {
                     }
                 }
             }
-            EchoClientAction::Closed { connection } => {
+            EchoClientAction::CloseEvent { connection } => {
                 info!("|ECHO_CLIENT| connection {:?} closed", connection);
 
                 let connection = state.new_uid();
@@ -261,7 +261,7 @@ fn connect(client_state: &EchoClientState, dispatcher: &mut Dispatcher, connecti
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
         on_close_connection: callback!(|connection: Uid| {
-            EchoClientAction::Closed { connection }
+            EchoClientAction::CloseEvent { connection }
         }),
         on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
             EchoClientAction::ConnectResult { connection, result }

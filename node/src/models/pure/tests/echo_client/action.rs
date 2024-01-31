@@ -20,7 +20,7 @@ pub enum EchoClientAction {
         connection: Uid,
         result: ConnectionResult,
     },
-    Closed {
+    CloseEvent {
         connection: Uid,
     },
     PollResult {

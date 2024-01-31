@@ -69,10 +69,10 @@ impl PureModel for PnetServerState {
                     server,
                     max_connections,
                     on_new_connection: callback!(|(server: Uid, connection: Uid)| {
-                        PnetServerAction::NewConnection { server, connection }
+                        PnetServerAction::NewConnectionEvent { server, connection }
                     }),
                     on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
-                        PnetServerAction::Closed { connection }
+                        PnetServerAction::CloseEvent { connection }
                     }),
                     on_result: callback!(|(server: Uid, result: OrError<()>)| {
                         PnetServerAction::NewResult { server, result }
@@ -89,7 +89,7 @@ impl PureModel for PnetServerState {
                     server_state.remove_server(&server)
                 }
             }
-            PnetServerAction::NewConnection { server, connection } => {
+            PnetServerAction::NewConnectionEvent { server, connection } => {
                 let server_state: &mut PnetServerState = state.substate_mut();
 
                 server_state.new_connection(server, connection);
@@ -105,7 +105,7 @@ impl PureModel for PnetServerState {
                 RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
                 RecvResult::Error(_) => (),
             },
-            PnetServerAction::Closed { connection } => {
+            PnetServerAction::CloseEvent { connection } => {
                 let server_state = state.substate_mut::<PnetServerState>();
                 handle_connection_closed(server_state, connection, dispatcher)
             }

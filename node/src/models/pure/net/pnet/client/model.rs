@@ -67,7 +67,7 @@ impl PureModel for PnetClientState {
                     address,
                     timeout,
                     on_close_connection: callback!(|connection: Uid| {
-                        PnetClientAction::Closed { connection }
+                        PnetClientAction::CloseEvent { connection }
                     }),
                     on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
                         let ConnectionResult::Outgoing(result) = result else { unreachable!() };
@@ -95,7 +95,7 @@ impl PureModel for PnetClientState {
                 RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
                 RecvResult::Error(_) => (),
             },
-            PnetClientAction::Closed { connection } => {
+            PnetClientAction::CloseEvent { connection } => {
                 let client_state = state.substate_mut::<PnetClientState>();
                 handle_connection_closed(client_state, connection, dispatcher)
             }
