@@ -1,14 +1,11 @@
-//use log::info;
+use super::action::{MioEvent, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
+use crate::automaton::action::{OrError, Timeout};
+use crate::automaton::state::{Objects, Uid};
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
 use std::time::Duration;
-
-use crate::automaton::action::{OrError, Timeout};
-use crate::automaton::state::{Objects, Uid};
-
-use super::action::{MioEvent, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
 
 pub struct MioState {
     poll_objects: RefCell<Objects<Poll>>,

@@ -10,7 +10,7 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "7f93cd46-0dd7-4849-a823-c1231ea51f60"]
-pub enum PnetServerPureAction {
+pub enum PnetServerAction {
     New {
         address: String,
         server: Uid,
@@ -18,6 +18,14 @@ pub enum PnetServerPureAction {
         on_new_connection: Redispatch<(Uid, Uid)>,
         on_close_connection: Redispatch<(Uid, Uid)>, // (server_uid, connection_uid)
         on_result: Redispatch<(Uid, OrError<()>)>,
+    },
+    NewResult {
+        server: Uid,
+        result: OrError<()>,
+    },
+    NewConnection {
+        server: Uid,
+        connection: Uid,
     },
     Poll {
         uid: Uid,
@@ -27,12 +35,19 @@ pub enum PnetServerPureAction {
     Close {
         connection: Uid,
     },
+    Closed {
+        connection: Uid,
+    },
     Send {
         uid: Uid,
         connection: Uid,
         data: Vec<u8>,
         timeout: Timeout,
         on_result: Redispatch<(Uid, SendResult)>,
+    },
+    SendNonceResult {
+        uid: Uid,
+        result: SendResult,
     },
     Recv {
         uid: Uid,
@@ -41,27 +56,18 @@ pub enum PnetServerPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, RecvResult)>,
     },
+    RecvResult {
+        uid: Uid,
+        result: RecvResult,
+    },
+    RecvNonceResult {
+        uid: Uid,
+        result: RecvResult,
+    },
 }
 
-impl Action for PnetServerPureAction {
+impl Action for PnetServerAction {
     fn kind(&self) -> ActionKind {
         ActionKind::Pure
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "9c55db43-3a8e-4ac0-b52e-221b7b87206b"]
-pub enum PnetServerInputAction {
-    NewResult { server: Uid, result: OrError<()> },
-    NewConnection { server: Uid, connection: Uid },
-    SendNonceResult { uid: Uid, result: SendResult },
-    RecvNonceResult { uid: Uid, result: RecvResult },
-    Closed { connection: Uid },
-    RecvResult { uid: Uid, result: RecvResult },
-}
-
-impl Action for PnetServerInputAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Input
     }
 }

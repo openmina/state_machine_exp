@@ -1,11 +1,11 @@
-use super::action::{MioOutputAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
+use super::action::{MioAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
 use super::state::MioState;
 use crate::automaton::action::Dispatcher;
-use crate::automaton::model::{Output, OutputModel};
+use crate::automaton::model::{Effectful, EffectfulModel};
 use crate::automaton::runner::{RegisterModel, RunnerBuilder};
 use crate::automaton::state::ModelState;
 
-// The `MioState` struct, implementing the `OutputModel` trait, provides the
+// The `MioState` struct, implementing the `EffectfulModel` trait, provides the
 // interface layer between the state-machine and the MIO crate for asynchronous
 // I/O operations.
 //
@@ -17,23 +17,23 @@ use crate::automaton::state::ModelState;
 //   establishing connections, closing active connections, and reading/writing
 //   data over established TCP connections.
 //
-// Each of these operations corresponds to a variant in `MioOutputAction`.
-// The `process_output` function handles these actions by invoking the
+// Each of these operations corresponds to a variant in `MioAction`.
+// The `process_effectful` function handles these actions by invoking the
 // appropriate function in `MioState`, and dispatches the result back as a
-// caller-defined `InputAction`.
+// caller-defined `PureAction`.
 
 impl RegisterModel for MioState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder.model_output(Output::<Self>(Self::new()))
+        builder.model_effectful(Effectful::<Self>(Self::new()))
     }
 }
 
-impl OutputModel for MioState {
-    type Action = MioOutputAction;
+impl EffectfulModel for MioState {
+    type Action = MioAction;
 
-    fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
+    fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            MioOutputAction::PollCreate { poll, on_result } => {
+            MioAction::PollCreate { poll, on_result } => {
                 // NOTE: use this pattern to inhibit side-effects when in replay mode
                 let result = if dispatcher.is_replayer() {
                     // This value is ignored and it is replaced by whatever it
@@ -45,7 +45,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (poll, result));
             }
-            MioOutputAction::PollRegisterTcpServer {
+            MioAction::PollRegisterTcpServer {
                 poll,
                 tcp_listener,
                 on_result,
@@ -58,7 +58,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
-            MioOutputAction::PollRegisterTcpConnection {
+            MioAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result,
@@ -71,7 +71,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioOutputAction::PollDeregisterTcpConnection {
+            MioAction::PollDeregisterTcpConnection {
                 poll,
                 connection,
                 on_result,
@@ -84,7 +84,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioOutputAction::PollEvents {
+            MioAction::PollEvents {
                 uid,
                 poll,
                 events,
@@ -99,7 +99,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioOutputAction::EventsCreate {
+            MioAction::EventsCreate {
                 uid,
                 capacity,
                 on_result,
@@ -110,7 +110,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, uid);
             }
-            MioOutputAction::TcpListen {
+            MioAction::TcpListen {
                 tcp_listener,
                 address,
                 on_result,
@@ -123,7 +123,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
-            MioOutputAction::TcpAccept {
+            MioAction::TcpAccept {
                 connection,
                 tcp_listener,
                 on_result,
@@ -136,7 +136,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioOutputAction::TcpConnect {
+            MioAction::TcpConnect {
                 connection,
                 address,
                 on_result,
@@ -149,7 +149,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioOutputAction::TcpClose {
+            MioAction::TcpClose {
                 connection,
                 on_result,
             } => {
@@ -159,7 +159,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, connection);
             }
-            MioOutputAction::TcpWrite {
+            MioAction::TcpWrite {
                 uid,
                 connection: connection_uid,
                 data,
@@ -173,7 +173,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioOutputAction::TcpRead {
+            MioAction::TcpRead {
                 uid,
                 connection,
                 len,
@@ -187,7 +187,7 @@ impl OutputModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioOutputAction::TcpGetPeerAddress {
+            MioAction::TcpGetPeerAddress {
                 connection,
                 on_result,
             } => {

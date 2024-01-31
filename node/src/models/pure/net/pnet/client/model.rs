@@ -1,11 +1,11 @@
 use super::{
-    action::{PnetClientInputAction, PnetClientPureAction},
+    action::PnetClientAction,
     state::{Connection, PnetClientState},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, Redispatch, Timeout},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
@@ -14,7 +14,7 @@ use crate::{
         net::{
             pnet::common::{ConnectionState, XSalsa20Wrapper},
             tcp::action::{ConnectResult, ConnectionResult, RecvResult, SendResult},
-            tcp_client::{action::TcpClientPureAction, state::TcpClientState},
+            tcp_client::{action::TcpClientAction, state::TcpClientState},
         },
         prng::state::PRNGState,
     },
@@ -27,138 +27,113 @@ impl RegisterModel for PnetClientState {
         builder
             .register::<PRNGState>() // FIXME: replace with effectful
             .register::<TcpClientState>()
-            .model_pure_and_input::<Self>()
-    }
-}
-
-enum Act {
-    In(PnetClientInputAction),
-    Pure(PnetClientPureAction),
-}
-
-fn process_action<Substate: ModelState>(
-    state: &mut State<Substate>,
-    action: Act,
-    dispatcher: &mut Dispatcher,
-) {
-    match action {
-        Act::Pure(PnetClientPureAction::Poll {
-            uid,
-            timeout,
-            on_result,
-        }) => dispatcher.dispatch(TcpClientPureAction::Poll {
-            uid,
-            timeout,
-            on_result,
-        }),
-        Act::Pure(PnetClientPureAction::Connect {
-            connection,
-            address,
-            timeout,
-            on_close_connection,
-            on_result,
-        }) => {
-            state.substate_mut::<PnetClientState>().new_connection(
-                connection,
-                on_close_connection,
-                on_result,
-            );
-
-            dispatcher.dispatch(TcpClientPureAction::Connect {
-                connection,
-                address,
-                timeout,
-                on_close_connection: callback!(|connection: Uid| {
-                    PnetClientInputAction::Closed { connection }
-                }),
-                on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
-                    let ConnectionResult::Outgoing(result) = result else { unreachable!() };
-                    PnetClientInputAction::ConnectResult { connection, result }
-                }),
-            })
-        }
-        Act::In(PnetClientInputAction::ConnectResult { connection, result }) => match result {
-            ConnectResult::Success => send_nonce(state, connection, dispatcher),
-            ConnectResult::Timeout | ConnectResult::Error(_) => {
-                println!("conenct result {:?}", result);
-                handle_connect_error(state, connection, result, dispatcher)
-            }
-        },
-        Act::In(PnetClientInputAction::SendNonceResult { uid, result }) => match result {
-            SendResult::Success => recv_nonce(state, uid, dispatcher),
-            SendResult::Timeout => handle_handshake_timeout(state, uid, dispatcher),
-            // at this point the connection is closed by TcpClient model
-            // and we get notified with `PnetClientInputAction::Closed`,
-            // so we handle this case in `handle_connection_closed()`
-            SendResult::Error(_) => (),
-        },
-        Act::In(PnetClientInputAction::RecvNonceResult { uid, result }) => match result {
-            RecvResult::Success(nonce) => complete_connection(state, uid, nonce, dispatcher),
-            RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
-            RecvResult::Error(_) => (),
-        },
-        Act::In(PnetClientInputAction::Closed { connection }) => {
-            let client_state = state.substate_mut::<PnetClientState>();
-            handle_connection_closed(client_state, connection, dispatcher)
-        }
-        Act::Pure(PnetClientPureAction::Close { connection }) => {
-            dispatcher.dispatch(TcpClientPureAction::Close { connection })
-        }
-        Act::Pure(PnetClientPureAction::Send {
-            uid,
-            connection,
-            data,
-            timeout,
-            on_result,
-        }) => encrypt_and_send(state, uid, connection, data, timeout, on_result, dispatcher),
-        Act::Pure(PnetClientPureAction::Recv {
-            uid,
-            connection,
-            count,
-            timeout,
-            on_result,
-        }) => {
-            state
-                .substate_mut::<PnetClientState>()
-                .new_recv_request(&uid, connection, on_result);
-
-            dispatcher.dispatch(TcpClientPureAction::Recv {
-                uid,
-                connection,
-                count,
-                timeout,
-                on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                    PnetClientInputAction::RecvResult { uid, result }
-                }),
-            })
-        }
-        Act::In(PnetClientInputAction::RecvResult { uid, result }) => {
-            recv_and_decrypt(state, uid, result, dispatcher)
-        }
-    }
-}
-
-impl InputModel for PnetClientState {
-    type Action = PnetClientInputAction;
-
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        process_action(state, Act::In(action), dispatcher)
+            .model_pure::<Self>()
     }
 }
 
 impl PureModel for PnetClientState {
-    type Action = PnetClientPureAction;
+    type Action = PnetClientAction;
 
     fn process_pure<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        process_action(state, Act::Pure(action), dispatcher)
+        match action {
+            PnetClientAction::Poll {
+                uid,
+                timeout,
+                on_result,
+            } => dispatcher.dispatch(TcpClientAction::Poll {
+                uid,
+                timeout,
+                on_result,
+            }),
+            PnetClientAction::Connect {
+                connection,
+                address,
+                timeout,
+                on_close_connection,
+                on_result,
+            } => {
+                state.substate_mut::<PnetClientState>().new_connection(
+                    connection,
+                    on_close_connection,
+                    on_result,
+                );
+
+                dispatcher.dispatch(TcpClientAction::Connect {
+                    connection,
+                    address,
+                    timeout,
+                    on_close_connection: callback!(|connection: Uid| {
+                        PnetClientAction::Closed { connection }
+                    }),
+                    on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
+                        let ConnectionResult::Outgoing(result) = result else { unreachable!() };
+                        PnetClientAction::ConnectResult { connection, result }
+                    }),
+                })
+            }
+            PnetClientAction::ConnectResult { connection, result } => match result {
+                ConnectResult::Success => send_nonce(state, connection, dispatcher),
+                ConnectResult::Timeout | ConnectResult::Error(_) => {
+                    println!("conenct result {:?}", result);
+                    handle_connect_error(state, connection, result, dispatcher)
+                }
+            },
+            PnetClientAction::SendNonceResult { uid, result } => match result {
+                SendResult::Success => recv_nonce(state, uid, dispatcher),
+                SendResult::Timeout => handle_handshake_timeout(state, uid, dispatcher),
+                // at this point the connection is closed by TcpClient model
+                // and we get notified with `PnetClientInputAction::Closed`,
+                // so we handle this case in `handle_connection_closed()`
+                SendResult::Error(_) => (),
+            },
+            PnetClientAction::RecvNonceResult { uid, result } => match result {
+                RecvResult::Success(nonce) => complete_connection(state, uid, nonce, dispatcher),
+                RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
+                RecvResult::Error(_) => (),
+            },
+            PnetClientAction::Closed { connection } => {
+                let client_state = state.substate_mut::<PnetClientState>();
+                handle_connection_closed(client_state, connection, dispatcher)
+            }
+            PnetClientAction::Close { connection } => {
+                dispatcher.dispatch(TcpClientAction::Close { connection })
+            }
+            PnetClientAction::Send {
+                uid,
+                connection,
+                data,
+                timeout,
+                on_result,
+            } => encrypt_and_send(state, uid, connection, data, timeout, on_result, dispatcher),
+            PnetClientAction::Recv {
+                uid,
+                connection,
+                count,
+                timeout,
+                on_result,
+            } => {
+                state
+                    .substate_mut::<PnetClientState>()
+                    .new_recv_request(&uid, connection, on_result);
+
+                dispatcher.dispatch(TcpClientAction::Recv {
+                    uid,
+                    connection,
+                    count,
+                    timeout,
+                    on_result: callback!(|(uid: Uid, result: RecvResult)| {
+                        PnetClientAction::RecvResult { uid, result }
+                    }),
+                })
+            }
+            PnetClientAction::RecvResult { uid, result } => {
+                recv_and_decrypt(state, uid, result, dispatcher)
+            }
+        }
     }
 }
 
@@ -176,13 +151,13 @@ fn send_nonce<Substate: ModelState>(
 
     assert!(matches!(conn.state, ConnectionState::Init));
 
-    dispatcher.dispatch(TcpClientPureAction::Send {
+    dispatcher.dispatch(TcpClientAction::Send {
         uid,
         connection,
         data: nonce.into(),
         timeout,
         on_result: callback!(|(uid: Uid, result: SendResult)| {
-            PnetClientInputAction::SendNonceResult { uid, result }
+            PnetClientAction::SendNonceResult { uid, result }
         }),
     });
 
@@ -217,13 +192,13 @@ fn recv_nonce<Substate: ModelState>(
 
     let uid = state.new_uid();
 
-    dispatcher.dispatch(TcpClientPureAction::Recv {
+    dispatcher.dispatch(TcpClientAction::Recv {
         uid,
         connection,
         count: 24,
         timeout,
         on_result: callback!(|(uid: Uid, result: RecvResult)| {
-            PnetClientInputAction::RecvNonceResult { uid, result }
+            PnetClientAction::RecvNonceResult { uid, result }
         }),
     });
 
@@ -279,7 +254,7 @@ fn handle_handshake_timeout<Substate: ModelState>(
 
     dispatcher.dispatch_back(on_result, (connection, ConnectResult::Timeout));
     // Rest of logic handled by `PnetClientInputAction::Closed`
-    dispatcher.dispatch(TcpClientPureAction::Close { connection });
+    dispatcher.dispatch(TcpClientAction::Close { connection });
 }
 
 fn handle_connection_closed(
@@ -336,7 +311,7 @@ fn encrypt_and_send<Substate: ModelState>(
     };
     let mut data = data.clone();
     send_cipher.apply_keystream(&mut data);
-    dispatcher.dispatch(TcpClientPureAction::Send {
+    dispatcher.dispatch(TcpClientAction::Send {
         uid,
         connection,
         data: data.into(),

@@ -1,6 +1,6 @@
 use super::{
     action::{ActionKind, AnyAction, Dispatcher},
-    model::{AnyModel, Input, InputModel, Output, OutputModel, PrivateModel, Pure, PureModel},
+    model::{AnyModel, Effectful, EffectfulModel, PrivateModel, Pure, PureModel},
     state::{ModelState, State},
 };
 //use bincode::deserialize_from;
@@ -67,15 +67,7 @@ impl<Substate: ModelState> RunnerBuilder<Substate> {
         self
     }
 
-    pub fn model_pure_and_input<M: PureModel + InputModel>(mut self) -> Self {
-        self.models
-            .insert(<M as PureModel>::Action::UUID, Pure::<M>::into_vtable2());
-        self.models
-            .insert(<M as InputModel>::Action::UUID, Input::<M>::into_vtable2());
-        self
-    }
-
-    pub fn model_output<M: OutputModel>(mut self, model: Output<M>) -> Self {
+    pub fn model_effectful<M: EffectfulModel>(mut self, model: Effectful<M>) -> Self {
         self.models
             .insert(M::Action::UUID, Box::new(model).into_vtable());
         self
@@ -113,7 +105,7 @@ impl<Substate: ModelState> Runner<Substate> {
                 let dispatcher = &mut self.dispatchers[instance];
 
                 if dispatcher.is_halted() {
-                    return
+                    return;
                 }
 
                 let action = dispatcher.next_action();
@@ -122,7 +114,7 @@ impl<Substate: ModelState> Runner<Substate> {
         }
     }
 
-    fn process_action(&mut self, mut action: AnyAction, instance: usize) {
+    fn process_action(&mut self, action: AnyAction, instance: usize) {
         let dispatcher = &mut self.dispatchers[instance];
         let model = self
             .models
@@ -130,32 +122,11 @@ impl<Substate: ModelState> Runner<Substate> {
             .expect(&format!("action not found {}", action.type_name));
 
         // Replayer
-        if let Some(reader) = &mut dispatcher.replay_file {
-            let deserialized_action = model.deserialize_from(reader);
-
-            match action.kind {
-                ActionKind::Input => {
-                    // We replay *all* Input actions because we can't generate
-                    // any input actions deterministicaly. The reason is that
-                    // the function pointer in ResultDispatch fields is lost
-                    // during serialization.
-                    action = deserialized_action;
-                }
-                ActionKind::Pure | ActionKind::Output => {
-                    // For debugging purposes we check that the deserialized
-                    // action debugging information matches the one that was
-                    // generated deterministically.
-                    if action.dbginfo != deserialized_action.dbginfo {
-                        panic!(
-                            "Deserialized debug info mismatch:\naction:{:?}\ndeserialized:{:?}",
-                            action.dbginfo, deserialized_action.dbginfo
-                        )
-                    }
-                }
-            }
+        if let Some(_reader) = &mut dispatcher.replay_file {
+            todo!()
         }
 
-        // Recorder: no need to record Pure/Output actions, but for the moment
+        // Recorder: no need to record all actions, but for the moment
         // we record them to ensure that the state-machine works properly.
         if let Some(writer) = &mut dispatcher.record_file {
             model.serialize_into(writer, &action)
@@ -163,8 +134,7 @@ impl<Substate: ModelState> Runner<Substate> {
 
         match action.kind {
             ActionKind::Pure => model.process_pure(&mut self.state, action, dispatcher),
-            ActionKind::Input => model.process_input(&mut self.state, action, dispatcher),
-            ActionKind::Output => model.process_output(action, dispatcher),
+            ActionKind::Effectful => model.process_effectful(action, dispatcher),
         }
     }
 

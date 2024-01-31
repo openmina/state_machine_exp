@@ -10,13 +10,17 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "1a161896-de5f-46b2-8774-e60e8a34ef9f"]
-pub enum PnetClientPureAction {
+pub enum PnetClientAction {
     Connect {
         connection: Uid,
         address: String,
         timeout: Timeout,
         on_close_connection: Redispatch<Uid>,
         on_result: Redispatch<(Uid, ConnectResult)>,
+    },
+    ConnectResult {
+        connection: Uid,
+        result: ConnectResult,
     },
     Poll {
         uid: Uid,
@@ -26,6 +30,9 @@ pub enum PnetClientPureAction {
     Close {
         connection: Uid,
     },
+    Closed {
+        connection: Uid,
+    },
     Send {
         uid: Uid,
         connection: Uid,
@@ -33,6 +40,11 @@ pub enum PnetClientPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, SendResult)>,
     },
+    SendNonceResult {
+        uid: Uid,
+        result: SendResult,
+    },
+
     Recv {
         uid: Uid,
         connection: Uid,
@@ -40,40 +52,18 @@ pub enum PnetClientPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, RecvResult)>,
     },
-}
-
-impl Action for PnetClientPureAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "f315283b-258d-4b62-8d3a-ecfd2d0f3c9f"]
-pub enum PnetClientInputAction {
-    ConnectResult {
-        connection: Uid,
-        result: ConnectResult,
-    },
-    SendNonceResult {
+    RecvResult {
         uid: Uid,
-        result: SendResult,
+        result: RecvResult,
     },
     RecvNonceResult {
         uid: Uid,
         result: RecvResult,
     },
-    Closed {
-        connection: Uid,
-    },
-    RecvResult {
-        uid: Uid,
-        result: RecvResult,
-    },
 }
 
-impl Action for PnetClientInputAction {
+impl Action for PnetClientAction {
     fn kind(&self) -> ActionKind {
-        ActionKind::Input
+        ActionKind::Pure
     }
 }

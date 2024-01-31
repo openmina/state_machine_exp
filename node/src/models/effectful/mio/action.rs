@@ -6,10 +6,10 @@ use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
 use type_uuid::TypeUuid;
 
-// `MioOutputAction` is an enum representing various I/O related operations
+// `MioAction` is an enum representing various I/O related operations
 // that can be performed. These actions are dispatched for handling by the
 // `MioState` model. Each action variant includes the necessary parameters
-// for the operation and a callback `ResultDispatch` to dispatch the result
+// for the operation and a callback `Redispatch` to dispatch the result
 // of the operation back to the caller Model.
 //
 // Operations include:
@@ -23,7 +23,7 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "6ade1356-d5fe-4c28-8fa9-fe4ee2fffc5f"]
-pub enum MioOutputAction {
+pub enum MioAction {
     PollCreate {
         poll: Uid,
         on_result: Redispatch<(Uid, OrError<()>)>,
@@ -99,9 +99,9 @@ pub enum MioOutputAction {
     },
 }
 
-impl Action for MioOutputAction {
+impl Action for MioAction {
     fn kind(&self) -> ActionKind {
-        ActionKind::Output
+        ActionKind::Effectful
     }
 }
 

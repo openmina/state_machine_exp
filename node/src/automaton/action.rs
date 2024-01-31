@@ -13,8 +13,6 @@ use std::{
 };
 use type_uuid::TypeUuidDynamic;
 
-use super::state::Uid;
-
 #[derive(PartialEq, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum Timeout {
     Millis(u64),
@@ -45,40 +43,20 @@ where
     Ok(Rc::from(vec.into_boxed_slice()))
 }
 
-// Actions fall into 3 categories:
+// Actions fall into 2 categories:
 //
 // 1. `Pure`: these are both dispatched and processed by `PureModel`s.
 //    They can change the state-machine state but they don't cause any other
-//    side-effects. We don't need to record/replay them since they can be
-//    re-generated deterministically.
+//    side-effects.
 //
-// 2. `Input`: these can change the state-machine state but they don't cause
-//    side-effects. They are dispatched by `dispatch_back` and contain the
-//    result (`ResultDispatch`) of the processing of an action.
-//    If the processed action was an `Output` action, the resulting `Input`
-//    action brings information from the "external world" to the state-machine.
-//
-//    `Input` actions must be recorded: in theory, we only need to record the
-//    input actions dispatched by `OutputModel`s, however to deterministically
-//    reproduce `Input` actions dispatched from other sources, it should be
-//    required that `ResultDispatch` can be serialised and deserialized.
-//    `ResultDispatch` provides a mechanism where the callee (the dispatcher
-//    of an action) can convert the action's result into an `Input` action
-//    that gets dispatched (`dispatch_back`) to the caller. To do so, the
-//    caller includes in the action a pointer to a caller-defined function that
-//    performs this "result to `Input` action" conversion. To avoid the extra
-//    complexity of serializing/deserializing function pointers we skip them,
-//    instead we record/replay *all* `Input` actions.
-//
-// 3. `Output`: these are handled by `OutputModel`s to communicate to the
-//    "external world". `OutputModel`s don't have access to the state-machine
-//    state, but they have their own (minimal) state.
+// 2. `Effectful`: these are handled by `EffectfulModel`s to communicate to the
+//    "external world". `EffectfulModel`s don't access the state-machine state
+//    but they have their own (minimal) state.
 //
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ActionKind {
     Pure,
-    Input,
-    Output,
+    Effectful,
 }
 
 pub trait Action
@@ -96,6 +74,8 @@ pub struct ActionDebugInfo {
     pub action_id: u64,
     // action id of caller action
     pub caller: u64,
+    // Was the action dispatched with dispatch_back.
+    pub callback: bool,
 }
 
 pub struct AnyAction {
@@ -120,6 +100,7 @@ impl<T: Action> From<T> for AnyAction {
                 depth: 0,
                 action_id: 0,
                 caller: 0,
+                callback: false,
             },
         }
     }
@@ -256,10 +237,6 @@ impl Dispatcher {
         let location = Location::caller();
         assert_ne!(TypeId::of::<A>(), TypeId::of::<AnyAction>());
         let mut any_action: AnyAction = action.into();
-        assert!(matches!(
-            any_action.kind,
-            ActionKind::Pure | ActionKind::Output
-        ));
 
         any_action.dbginfo = ActionDebugInfo {
             location_file: location.file().to_string(),
@@ -267,6 +244,7 @@ impl Dispatcher {
             depth: self.depth + 1,
             action_id: self.action_id,
             caller: self.caller,
+            callback: false,
         };
         self.action_id += 1;
         self.queue.push_back(any_action);
@@ -280,14 +258,13 @@ impl Dispatcher {
         let location = Location::caller();
         let mut any_action = on_result.make(result);
 
-        assert!(matches!(any_action.kind, ActionKind::Input));
-
         any_action.dbginfo = ActionDebugInfo {
             location_file: location.file().to_string(),
             location_line: location.line(),
             depth: self.depth.saturating_sub(1),
             action_id: self.action_id,
             caller: self.caller,
+            callback: true,
         };
         self.action_id += 1;
         self.queue.push_back(any_action);

@@ -1,11 +1,11 @@
 use super::{
-    action::{TcpServerInputAction, TcpServerPureAction},
+    action::TcpServerAction,
     state::{PollRequest, RecvRequest, SendRequest, Server, TcpServerState},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, OrError},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
@@ -13,7 +13,7 @@ use crate::{
     models::pure::net::tcp::{
         action::{
             AcceptResult, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult,
-            TcpPollResult, TcpPureAction,
+            TcpAction, TcpPollResult,
         },
         state::TcpState,
     },
@@ -27,267 +27,237 @@ use std::collections::BTreeSet;
 // This model depends on the `TcpState` model.
 impl RegisterModel for TcpServerState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder
-            .register::<TcpState>()
-            .model_pure_and_input::<Self>()
-    }
-}
-
-enum Act {
-    In(TcpServerInputAction),
-    Pure(TcpServerPureAction),
-}
-
-fn process_action<Substate: ModelState>(
-    state: &mut State<Substate>,
-    action: Act,
-    dispatcher: &mut Dispatcher,
-) {
-    match action {
-        Act::Pure(TcpServerPureAction::New {
-            address,
-            server,
-            max_connections,
-            on_new_connection,
-            on_close_connection,
-            on_result,
-        }) => {
-            state.substate_mut::<TcpServerState>().new_server(
-                server,
-                max_connections,
-                on_new_connection,
-                on_close_connection,
-                on_result,
-            );
-
-            dispatcher.dispatch(TcpPureAction::Listen {
-                tcp_listener: server,
-                address,
-                on_result: callback!(|(server: Uid, result: OrError<()>)| {
-                    TcpServerInputAction::NewResult { server, result }
-                }),
-            });
-        }
-        Act::In(TcpServerInputAction::NewResult { server, result }) => {
-            let server_state: &mut TcpServerState = state.substate_mut();
-            let Server { on_result, .. } = server_state.get_server(&server);
-
-            dispatcher.dispatch_back(on_result, (server, result.clone()));
-
-            if result.is_err() {
-                server_state.remove_server(&server)
-            }
-        }
-        Act::Pure(TcpServerPureAction::Poll {
-            uid,
-            timeout,
-            on_result,
-        }) => {
-            let server_state: &mut TcpServerState = state.substate_mut();
-            let objects = server_state.server_objects.keys().cloned().collect();
-
-            server_state.set_poll_request(PollRequest { on_result });
-            dispatcher.dispatch(TcpPureAction::Poll {
-                uid,
-                objects,
-                timeout,
-                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                    TcpServerInputAction::PollResult { uid, result }
-                }),
-            })
-        }
-        Act::In(TcpServerInputAction::PollResult { uid, result }) => {
-            let accept_pending: Vec<_> =
-                handle_poll_result(state.substate_mut(), dispatcher, uid, result)
-                    .iter()
-                    .map(|listener| (*listener, state.new_uid()))
-                    .collect();
-
-            for (tcp_listener, connection) in accept_pending {
-                state
-                    .substate_mut::<TcpServerState>()
-                    .new_connection(connection, tcp_listener);
-
-                dispatcher.dispatch(TcpPureAction::Accept {
-                    connection,
-                    tcp_listener,
-                    on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
-                        TcpServerInputAction::AcceptResult { connection, result }
-                    }),
-                });
-            }
-        }
-        Act::In(TcpServerInputAction::AcceptResult { connection, result }) => {
-            let (server_uid, server) = state
-                .substate_mut::<TcpServerState>()
-                .get_connection_server_mut(&connection);
-            let ConnectionResult::Incoming(result) = result else {
-                unreachable!()
-            };
-
-            match result {
-                // when reach max allowed connections we close it without notifications
-                // TODO: this could probably better handled at low-level by changing the
-                // TcpListener backlog. Currently, MIO sets a fixed value of 1024.
-                AcceptResult::Success if server.connections.len() > server.max_connections => {
-                    dispatcher.dispatch(TcpPureAction::Close {
-                        connection,
-                        on_result: callback!(|connection: Uid| {
-                            TcpServerInputAction::CloseResult {
-                                connection,
-                                notify: false,
-                            }
-                        }),
-                    })
-                }
-                // otherwise we notify the model user of the new connection.
-                AcceptResult::Success => {
-                    dispatcher.dispatch_back(&server.on_new_connection, (*server_uid, connection))
-                }
-                // No new connections, ignore.
-                AcceptResult::WouldBlock => server.remove_connection(&connection),
-                // Warn about accept errors, but no user notification.
-                AcceptResult::Error(error) => {
-                    warn!(
-                        "|TCP_SERVER| accept connection {:?} failed: {:?}",
-                        connection, error
-                    );
-                    server.remove_connection(&connection);
-                }
-            }
-        }
-        Act::Pure(TcpServerPureAction::Close { connection }) => {
-            dispatcher.dispatch(TcpPureAction::Close {
-                connection,
-                on_result: callback!(|connection: Uid| {
-                    TcpServerInputAction::CloseResult {
-                        connection,
-                        notify: true,
-                    }
-                }),
-            })
-        }
-        Act::In(TcpServerInputAction::CloseResult { connection, notify }) => {
-            let (&uid, server) = state
-                .substate_mut::<TcpServerState>()
-                .get_connection_server_mut(&connection);
-
-            if notify {
-                dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
-            }
-
-            server.remove_connection(&connection);
-        }
-        Act::Pure(TcpServerPureAction::Send {
-            uid,
-            connection,
-            data,
-            timeout,
-            on_result,
-        }) => {
-            state
-                .substate_mut::<TcpServerState>()
-                .new_send_request(&uid, connection, on_result);
-
-            dispatcher.dispatch(TcpPureAction::Send {
-                uid,
-                connection,
-                data,
-                timeout,
-                on_result: callback!(|(uid: Uid, result: SendResult)| {
-                    TcpServerInputAction::SendResult { uid, result }
-                }),
-            });
-        }
-        Act::In(TcpServerInputAction::SendResult { uid, result }) => {
-            let SendRequest {
-                connection,
-                on_result,
-            } = state
-                .substate_mut::<TcpServerState>()
-                .take_send_request(&uid);
-
-            if let SendResult::Error(_) = result {
-                dispatcher.dispatch(TcpPureAction::Close {
-                    connection,
-                    on_result: callback!(|connection: Uid| {
-                        TcpServerInputAction::CloseResult {
-                            connection,
-                            notify: true,
-                        }
-                    }),
-                });
-            }
-
-            dispatcher.dispatch_back(&on_result, (uid, result))
-        }
-        Act::Pure(TcpServerPureAction::Recv {
-            uid,
-            connection,
-            count,
-            timeout,
-            on_result,
-        }) => {
-            state
-                .substate_mut::<TcpServerState>()
-                .new_recv_request(&uid, connection, on_result);
-
-            dispatcher.dispatch(TcpPureAction::Recv {
-                uid,
-                connection,
-                count,
-                timeout,
-                on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                    TcpServerInputAction::RecvResult { uid, result }
-                }),
-            });
-        }
-        Act::In(TcpServerInputAction::RecvResult { uid, result }) => {
-            let RecvRequest {
-                connection,
-                on_result,
-            } = state
-                .substate_mut::<TcpServerState>()
-                .take_recv_request(&uid);
-
-            if let RecvResult::Error(_) = result {
-                dispatcher.dispatch(TcpPureAction::Close {
-                    connection,
-                    on_result: callback!(|connection: Uid| {
-                        TcpServerInputAction::CloseResult {
-                            connection,
-                            notify: true,
-                        }
-                    }),
-                });
-            }
-
-            dispatcher.dispatch_back(&on_result, (uid, result))
-        }
-    }
-}
-
-impl InputModel for TcpServerState {
-    type Action = TcpServerInputAction;
-
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        process_action(state, Act::In(action), dispatcher)
+        builder.register::<TcpState>().model_pure::<Self>()
     }
 }
 
 impl PureModel for TcpServerState {
-    type Action = TcpServerPureAction;
+    type Action = TcpServerAction;
 
     fn process_pure<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        process_action(state, Act::Pure(action), dispatcher)
+        match action {
+            TcpServerAction::New {
+                address,
+                server,
+                max_connections,
+                on_new_connection,
+                on_close_connection,
+                on_result,
+            } => {
+                state.substate_mut::<TcpServerState>().new_server(
+                    server,
+                    max_connections,
+                    on_new_connection,
+                    on_close_connection,
+                    on_result,
+                );
+
+                dispatcher.dispatch(TcpAction::Listen {
+                    tcp_listener: server,
+                    address,
+                    on_result: callback!(|(server: Uid, result: OrError<()>)| {
+                        TcpServerAction::NewResult { server, result }
+                    }),
+                });
+            }
+            TcpServerAction::NewResult { server, result } => {
+                let server_state: &mut TcpServerState = state.substate_mut();
+                let Server { on_result, .. } = server_state.get_server(&server);
+
+                dispatcher.dispatch_back(on_result, (server, result.clone()));
+
+                if result.is_err() {
+                    server_state.remove_server(&server)
+                }
+            }
+            TcpServerAction::Poll {
+                uid,
+                timeout,
+                on_result,
+            } => {
+                let server_state: &mut TcpServerState = state.substate_mut();
+                let objects = server_state.server_objects.keys().cloned().collect();
+
+                server_state.set_poll_request(PollRequest { on_result });
+                dispatcher.dispatch(TcpAction::Poll {
+                    uid,
+                    objects,
+                    timeout,
+                    on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
+                        TcpServerAction::PollResult { uid, result }
+                    }),
+                })
+            }
+            TcpServerAction::PollResult { uid, result } => {
+                let accept_pending: Vec<_> =
+                    handle_poll_result(state.substate_mut(), dispatcher, uid, result)
+                        .iter()
+                        .map(|listener| (*listener, state.new_uid()))
+                        .collect();
+
+                for (tcp_listener, connection) in accept_pending {
+                    state
+                        .substate_mut::<TcpServerState>()
+                        .new_connection(connection, tcp_listener);
+
+                    dispatcher.dispatch(TcpAction::Accept {
+                        connection,
+                        tcp_listener,
+                        on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
+                            TcpServerAction::AcceptResult { connection, result }
+                        }),
+                    });
+                }
+            }
+            TcpServerAction::AcceptResult { connection, result } => {
+                let (server_uid, server) = state
+                    .substate_mut::<TcpServerState>()
+                    .get_connection_server_mut(&connection);
+                let ConnectionResult::Incoming(result) = result else {
+                    unreachable!()
+                };
+
+                match result {
+                    // when reach max allowed connections we close it without notifications
+                    // TODO: this could probably better handled at low-level by changing the
+                    // TcpListener backlog. Currently, MIO sets a fixed value of 1024.
+                    AcceptResult::Success if server.connections.len() > server.max_connections => {
+                        dispatcher.dispatch(TcpAction::Close {
+                            connection,
+                            on_result: callback!(|connection: Uid| {
+                                TcpServerAction::CloseResult {
+                                    connection,
+                                    notify: false,
+                                }
+                            }),
+                        })
+                    }
+                    // otherwise we notify the model user of the new connection.
+                    AcceptResult::Success => dispatcher
+                        .dispatch_back(&server.on_new_connection, (*server_uid, connection)),
+                    // No new connections, ignore.
+                    AcceptResult::WouldBlock => server.remove_connection(&connection),
+                    // Warn about accept errors, but no user notification.
+                    AcceptResult::Error(error) => {
+                        warn!(
+                            "|TCP_SERVER| accept connection {:?} failed: {:?}",
+                            connection, error
+                        );
+                        server.remove_connection(&connection);
+                    }
+                }
+            }
+            TcpServerAction::Close { connection } => dispatcher.dispatch(TcpAction::Close {
+                connection,
+                on_result: callback!(|connection: Uid| {
+                    TcpServerAction::CloseResult {
+                        connection,
+                        notify: true,
+                    }
+                }),
+            }),
+            TcpServerAction::CloseResult { connection, notify } => {
+                let (&uid, server) = state
+                    .substate_mut::<TcpServerState>()
+                    .get_connection_server_mut(&connection);
+
+                if notify {
+                    dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
+                }
+
+                server.remove_connection(&connection);
+            }
+            TcpServerAction::Send {
+                uid,
+                connection,
+                data,
+                timeout,
+                on_result,
+            } => {
+                state
+                    .substate_mut::<TcpServerState>()
+                    .new_send_request(&uid, connection, on_result);
+
+                dispatcher.dispatch(TcpAction::Send {
+                    uid,
+                    connection,
+                    data,
+                    timeout,
+                    on_result: callback!(|(uid: Uid, result: SendResult)| {
+                        TcpServerAction::SendResult { uid, result }
+                    }),
+                });
+            }
+            TcpServerAction::SendResult { uid, result } => {
+                let SendRequest {
+                    connection,
+                    on_result,
+                } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_send_request(&uid);
+
+                if let SendResult::Error(_) = result {
+                    dispatcher.dispatch(TcpAction::Close {
+                        connection,
+                        on_result: callback!(|connection: Uid| {
+                            TcpServerAction::CloseResult {
+                                connection,
+                                notify: true,
+                            }
+                        }),
+                    });
+                }
+
+                dispatcher.dispatch_back(&on_result, (uid, result))
+            }
+            TcpServerAction::Recv {
+                uid,
+                connection,
+                count,
+                timeout,
+                on_result,
+            } => {
+                state
+                    .substate_mut::<TcpServerState>()
+                    .new_recv_request(&uid, connection, on_result);
+
+                dispatcher.dispatch(TcpAction::Recv {
+                    uid,
+                    connection,
+                    count,
+                    timeout,
+                    on_result: callback!(|(uid: Uid, result: RecvResult)| {
+                        TcpServerAction::RecvResult { uid, result }
+                    }),
+                });
+            }
+            TcpServerAction::RecvResult { uid, result } => {
+                let RecvRequest {
+                    connection,
+                    on_result,
+                } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_recv_request(&uid);
+
+                if let RecvResult::Error(_) = result {
+                    dispatcher.dispatch(TcpAction::Close {
+                        connection,
+                        on_result: callback!(|connection: Uid| {
+                            TcpServerAction::CloseResult {
+                                connection,
+                                notify: true,
+                            }
+                        }),
+                    });
+                }
+
+                dispatcher.dispatch_back(&on_result, (uid, result))
+            }
+        }
     }
 }
 

@@ -1,15 +1,23 @@
-use std::time::Duration;
-
-use super::{action::TimePureAction, state::TimeState};
+use super::{action::TimeAction, state::TimeState};
+use crate::automaton::runner::{RegisterModel, RunnerBuilder};
+use crate::models::effectful::time::{
+    action::TimeAction as IoTimeAction, state::TimeState as IoTimeState,
+};
 use crate::{
     automaton::{
         action::{Dispatcher, Timeout, TimeoutAbsolute},
-        model::{InputModel, PureModel},
+        model::PureModel,
         state::{ModelState, State, Uid},
     },
     callback,
-    models::{effectful::time::action::TimeOutputAction, pure::time::action::TimeInputAction},
 };
+use std::time::Duration;
+
+impl RegisterModel for TimeState {
+    fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
+        builder.register::<IoTimeState>().model_pure::<Self>()
+    }
+}
 
 pub fn update_time<Substate: ModelState>(
     state: &mut State<Substate>,
@@ -18,7 +26,7 @@ pub fn update_time<Substate: ModelState>(
     let tick = state.substate_mut::<TimeState>().tick();
 
     if tick {
-        dispatcher.dispatch(TimePureAction::UpdateCurrentTime);
+        dispatcher.dispatch(TimeAction::UpdateCurrentTime);
     }
 
     return tick;
@@ -41,35 +49,24 @@ pub fn get_timeout_absolute<Substate: ModelState>(
     }
 }
 
-impl InputModel for TimeState {
-    type Action = TimeInputAction;
-
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        _dispatcher: &mut Dispatcher,
-    ) {
-        let TimeInputAction::GetSystemTimeResult { result, .. } = action;
-        let time_state: &mut TimeState = state.substate_mut();
-
-        time_state.set_time(result);
-    }
-}
-
 impl PureModel for TimeState {
-    type Action = TimePureAction;
+    type Action = TimeAction;
 
     fn process_pure<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        assert!(matches!(action, TimePureAction::UpdateCurrentTime));
-        dispatcher.dispatch(TimeOutputAction::GetSystemTime {
-            uid: state.new_uid(),
-            on_result: callback!(|(uid: Uid, result: Duration)| {
-                TimeInputAction::GetSystemTimeResult { uid, result }
+        match action {
+            TimeAction::UpdateCurrentTime => dispatcher.dispatch(IoTimeAction::GetSystemTime {
+                uid: state.new_uid(),
+                on_result: callback!(|(uid: Uid, result: Duration)| {
+                    TimeAction::GetSystemTimeResult { uid, result }
+                }),
             }),
-        })
+            TimeAction::GetSystemTimeResult { uid: _, result } => {
+                state.substate_mut::<TimeState>().set_time(result);
+            }
+        }
     }
 }

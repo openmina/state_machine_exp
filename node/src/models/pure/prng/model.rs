@@ -19,7 +19,7 @@ use super::{action::PRNGPureAction, state::PRNGState};
 // operations requiring cryptographic security due to its determinism and lack
 // of cryptographic strength.
 //
-// TODO: implement a safe RNG (`OutputModel`).
+// TODO: implement a safe RNG (`EffectfulModel`).
 
 impl RegisterModel for PRNGState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {

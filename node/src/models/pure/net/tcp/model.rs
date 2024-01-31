@@ -1,20 +1,18 @@
 use super::{
-    action::{
-        ConnectResult, ConnectionEvent, RecvResult, TcpInputAction, TcpPollResult, TcpPureAction,
-    },
+    action::{ConnectResult, ConnectionEvent, RecvResult, TcpAction, TcpPollResult},
     state::{ConnectionStatus, Listener, RecvRequest, SendRequest, Status, TcpState},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, OrError, Redispatch, Timeout, TimeoutAbsolute},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::{
         effectful::mio::{
-            action::{MioOutputAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
+            action::{MioAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
             state::MioState,
         },
         pure::{
@@ -30,14 +28,11 @@ use crate::{
     },
 };
 use core::panic;
-//use log::info;
 use std::rc::Rc;
 
 // The `TcpState` model handles the state of a TCP connection system, which is
 // built on top of the `MioState` model. It processes the outcomes of external
-// inputs (the results of `MioState` actions) through its `InputModel`
-// implementation, while deterministic state transitions are managed by its
-// `PureModel` implementation.
+// inputs (the results of `MioState` actions).
 //
 // This model facilitates various operations, including:
 // - Creating polls.
@@ -50,215 +45,170 @@ use std::rc::Rc;
 // it's still pretty low-level. For simpler use, there are the `TcpClientState`
 // and `TcpServerState` models, which are built on top of the `TcpState` model.
 
-// This model depends on the `TimeState` (pure) and `MioState` (output) models.
+// This model depends on the `TimeState` (pure) and `MioState` (effectful).
 impl RegisterModel for TcpState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
         builder
             .register::<TimeState>()
             .register::<MioState>()
-            .model_pure_and_input::<Self>()
-    }
-}
-
-enum Act {
-    In(TcpInputAction),
-    Pure(TcpPureAction),
-}
-
-fn process_action<Substate: ModelState>(
-    state: &mut State<Substate>,
-    action: Act,
-    dispatcher: &mut Dispatcher,
-) {
-    match action {
-        Act::Pure(TcpPureAction::Init {
-            instance,
-            on_result,
-        }) => {
-            let poll = state.new_uid();
-            let tcp_state = state.substate_mut();
-
-            init(tcp_state, dispatcher, instance, poll, on_result)
-        }
-        // dispatched from init()
-        Act::In(TcpInputAction::PollCreateResult { result, .. }) => {
-            let events_uid = state.new_uid();
-            let tcp_state = state.substate_mut();
-
-            handle_poll_create_result(tcp_state, dispatcher, events_uid, result)
-        }
-        // dispatched from handle_poll_create_result()
-        Act::In(TcpInputAction::EventsCreateResult { .. }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_events_create_result(tcp_state, dispatcher)
-        }
-        Act::Pure(TcpPureAction::Listen {
-            tcp_listener,
-            address,
-            on_result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            listen(tcp_state, dispatcher, tcp_listener, address, on_result)
-        }
-        Act::In(TcpInputAction::ListenResult {
-            tcp_listener,
-            result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_listen_result(tcp_state, dispatcher, tcp_listener, result)
-        }
-        // dispatched from handle_listen_result()
-        Act::In(TcpInputAction::RegisterListenerResult {
-            tcp_listener,
-            result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_register_listener_result(tcp_state, dispatcher, tcp_listener, result)
-        }
-        Act::Pure(TcpPureAction::Accept {
-            connection,
-            tcp_listener,
-            on_result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            accept(tcp_state, dispatcher, connection, tcp_listener, on_result)
-        }
-        Act::In(TcpInputAction::AcceptResult { connection, result }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_accept_result(tcp_state, dispatcher, connection, result)
-        }
-        Act::Pure(TcpPureAction::Connect {
-            connection,
-            address,
-            timeout,
-            on_result,
-        }) => {
-            let timeout = get_timeout_absolute(state, timeout);
-            let tcp_state = state.substate_mut();
-
-            connect(
-                tcp_state, dispatcher, connection, address, timeout, on_result,
-            )
-        }
-        Act::In(TcpInputAction::ConnectResult { connection, result }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_connect_result(tcp_state, dispatcher, connection, result)
-        }
-        // dispatched from: handle_accept_result(), handle_connect_result()
-        Act::In(TcpInputAction::RegisterConnectionResult { connection, result }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_register_connection_result(tcp_state, dispatcher, connection, result)
-        }
-        Act::Pure(TcpPureAction::Close {
-            connection,
-            on_result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            close(tcp_state, dispatcher, connection, on_result)
-        }
-        Act::In(TcpInputAction::CloseResult { connection }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_close_result(tcp_state, dispatcher, connection)
-        }
-        // dispatched from close()
-        Act::In(TcpInputAction::DeregisterConnectionResult { connection, result }) => {
-            handle_deregister_connection_result(dispatcher, connection, result)
-        }
-        Act::Pure(TcpPureAction::Poll {
-            uid,
-            objects,
-            timeout,
-            on_result,
-        }) => {
-            let tcp_state = state.substate_mut();
-
-            poll(tcp_state, dispatcher, uid, objects, timeout, on_result)
-        }
-        Act::In(TcpInputAction::PollResult { uid, result }) => {
-            let current_time = get_current_time(state);
-            let tcp_state = state.substate_mut();
-
-            handle_poll_result(tcp_state, dispatcher, current_time, uid, result)
-        }
-        // dispatched from handle_poll_result() -> process_pending_connections()
-        Act::In(TcpInputAction::PeerAddressResult { connection, result }) => {
-            let tcp_state = state.substate_mut();
-
-            handle_peer_address_result(tcp_state, dispatcher, connection, result)
-        }
-        Act::Pure(TcpPureAction::Send {
-            uid,
-            connection,
-            data,
-            timeout,
-            on_result,
-        }) => {
-            let timeout = get_timeout_absolute(state, timeout);
-            let tcp_state = state.substate_mut();
-
-            send(
-                tcp_state, dispatcher, uid, connection, data, timeout, on_result,
-            )
-        }
-        Act::In(TcpInputAction::SendResult { uid, result }) => {
-            let current_time = get_current_time(state);
-            let tcp_state = state.substate_mut();
-
-            handle_send_result(tcp_state, dispatcher, current_time, uid, result)
-        }
-        Act::Pure(TcpPureAction::Recv {
-            uid,
-            connection,
-            count,
-            timeout,
-            on_result,
-        }) => {
-            let timeout = get_timeout_absolute(state, timeout);
-            let tcp_state = state.substate_mut();
-
-            recv(
-                tcp_state, dispatcher, uid, connection, count, timeout, on_result,
-            )
-        }
-        Act::In(TcpInputAction::RecvResult { uid, result }) => {
-            let current_time = get_current_time(state);
-
-            handle_recv_result(state.substate_mut(), dispatcher, current_time, uid, result)
-        }
+            .model_pure::<Self>()
     }
 }
 
 impl PureModel for TcpState {
-    type Action = TcpPureAction;
+    type Action = TcpAction;
 
     fn process_pure<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        process_action(state, Act::Pure(action), dispatcher)
-    }
-}
-
-impl InputModel for TcpState {
-    type Action = TcpInputAction;
-
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        process_action(state, Act::In(action), dispatcher)
+        match action {
+            TcpAction::Init {
+                instance,
+                on_result,
+            } => {
+                let poll = state.new_uid();
+                let tcp_state = state.substate_mut();
+                init(tcp_state, dispatcher, instance, poll, on_result)
+            }
+            // dispatched from init()
+            TcpAction::PollCreateResult { result, .. } => {
+                let events_uid = state.new_uid();
+                let tcp_state = state.substate_mut();
+                handle_poll_create_result(tcp_state, dispatcher, events_uid, result)
+            }
+            // dispatched from handle_poll_create_result()
+            TcpAction::EventsCreateResult { .. } => {
+                let tcp_state = state.substate_mut();
+                handle_events_create_result(tcp_state, dispatcher)
+            }
+            TcpAction::Listen {
+                tcp_listener,
+                address,
+                on_result,
+            } => {
+                let tcp_state = state.substate_mut();
+                listen(tcp_state, dispatcher, tcp_listener, address, on_result)
+            }
+            TcpAction::ListenResult {
+                tcp_listener,
+                result,
+            } => {
+                let tcp_state = state.substate_mut();
+                handle_listen_result(tcp_state, dispatcher, tcp_listener, result)
+            }
+            // dispatched from handle_listen_result()
+            TcpAction::RegisterListenerResult {
+                tcp_listener,
+                result,
+            } => {
+                let tcp_state = state.substate_mut();
+                handle_register_listener_result(tcp_state, dispatcher, tcp_listener, result)
+            }
+            TcpAction::Accept {
+                connection,
+                tcp_listener,
+                on_result,
+            } => {
+                let tcp_state = state.substate_mut();
+                accept(tcp_state, dispatcher, connection, tcp_listener, on_result)
+            }
+            TcpAction::AcceptResult { connection, result } => {
+                let tcp_state = state.substate_mut();
+                handle_accept_result(tcp_state, dispatcher, connection, result)
+            }
+            TcpAction::Connect {
+                connection,
+                address,
+                timeout,
+                on_result,
+            } => {
+                let timeout = get_timeout_absolute(state, timeout);
+                let tcp_state = state.substate_mut();
+                connect(
+                    tcp_state, dispatcher, connection, address, timeout, on_result,
+                )
+            }
+            TcpAction::ConnectResult { connection, result } => {
+                let tcp_state = state.substate_mut();
+                handle_connect_result(tcp_state, dispatcher, connection, result)
+            }
+            // dispatched from: handle_accept_result(), handle_connect_result()
+            TcpAction::RegisterConnectionResult { connection, result } => {
+                let tcp_state = state.substate_mut();
+                handle_register_connection_result(tcp_state, dispatcher, connection, result)
+            }
+            TcpAction::Close {
+                connection,
+                on_result,
+            } => {
+                let tcp_state = state.substate_mut();
+                close(tcp_state, dispatcher, connection, on_result)
+            }
+            TcpAction::CloseResult { connection } => {
+                let tcp_state = state.substate_mut();
+                handle_close_result(tcp_state, dispatcher, connection)
+            }
+            // dispatched from close()
+            TcpAction::DeregisterConnectionResult { connection, result } => {
+                handle_deregister_connection_result(dispatcher, connection, result)
+            }
+            TcpAction::Poll {
+                uid,
+                objects,
+                timeout,
+                on_result,
+            } => {
+                let tcp_state = state.substate_mut();
+                poll(tcp_state, dispatcher, uid, objects, timeout, on_result)
+            }
+            TcpAction::PollResult { uid, result } => {
+                let current_time = get_current_time(state);
+                let tcp_state = state.substate_mut();
+                handle_poll_result(tcp_state, dispatcher, current_time, uid, result)
+            }
+            // dispatched from handle_poll_result() -> process_pending_connections()
+            TcpAction::PeerAddressResult { connection, result } => {
+                let tcp_state = state.substate_mut();
+                handle_peer_address_result(tcp_state, dispatcher, connection, result)
+            }
+            TcpAction::Send {
+                uid,
+                connection,
+                data,
+                timeout,
+                on_result,
+            } => {
+                let timeout = get_timeout_absolute(state, timeout);
+                let tcp_state = state.substate_mut();
+                send(
+                    tcp_state, dispatcher, uid, connection, data, timeout, on_result,
+                )
+            }
+            TcpAction::SendResult { uid, result } => {
+                let current_time = get_current_time(state);
+                let tcp_state = state.substate_mut();
+                handle_send_result(tcp_state, dispatcher, current_time, uid, result)
+            }
+            TcpAction::Recv {
+                uid,
+                connection,
+                count,
+                timeout,
+                on_result,
+            } => {
+                let timeout = get_timeout_absolute(state, timeout);
+                let tcp_state = state.substate_mut();
+                recv(
+                    tcp_state, dispatcher, uid, connection, count, timeout, on_result,
+                )
+            }
+            TcpAction::RecvResult { uid, result } => {
+                let current_time = get_current_time(state);
+                handle_recv_result(state.substate_mut(), dispatcher, current_time, uid, result)
+            }
+        }
     }
 }
 
@@ -278,10 +228,10 @@ fn handle_poll_create_result(
     {
         if result.is_ok() {
             // Dispatch next action to continue initialization
-            dispatcher.dispatch(MioOutputAction::EventsCreate {
+            dispatcher.dispatch(MioAction::EventsCreate {
                 uid: events,
                 capacity: 1024,
-                on_result: callback!(|uid: Uid| TcpInputAction::EventsCreateResult { uid }),
+                on_result: callback!(|uid: Uid| TcpAction::EventsCreateResult { uid }),
             });
 
             // next state
@@ -333,11 +283,11 @@ fn handle_listen_result(
             unreachable!()
         };
 
-        dispatcher.dispatch(MioOutputAction::PollRegisterTcpServer {
+        dispatcher.dispatch(MioAction::PollRegisterTcpServer {
             poll,
             tcp_listener,
             on_result: callback!(|(tcp_listener: Uid, result: OrError<()>)| {
-                TcpInputAction::RegisterListenerResult {
+                TcpAction::RegisterListenerResult {
                     tcp_listener,
                     result,
                 }
@@ -397,11 +347,11 @@ fn handle_accept_result(
             };
 
             // We will dispatch-back to the caller from `handle_register_connection_result`
-            dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
+            dispatcher.dispatch(MioAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result: callback!(|(connection: Uid, result: OrError<()>)| {
-                    TcpInputAction::RegisterConnectionResult { connection, result }
+                    TcpAction::RegisterConnectionResult { connection, result }
                 }),
             });
         }
@@ -473,9 +423,9 @@ fn handle_register_connection_result(
         *status = ConnectionStatus::CloseRequest {
             maybe_on_result: None,
         };
-        dispatcher.dispatch(MioOutputAction::TcpClose {
+        dispatcher.dispatch(MioAction::TcpClose {
             connection,
-            on_result: callback!(|connection: Uid| TcpInputAction::CloseResult { connection }),
+            on_result: callback!(|connection: Uid| TcpAction::CloseResult { connection }),
         });
 
         let error = format!("Error registering connection {:?}: {}", connection, error);
@@ -508,9 +458,9 @@ fn handle_deregister_connection_result(
     result: OrError<()>,
 ) {
     match result {
-        Ok(_) => dispatcher.dispatch(MioOutputAction::TcpClose {
+        Ok(_) => dispatcher.dispatch(MioAction::TcpClose {
             connection,
-            on_result: callback!(|connection: Uid| TcpInputAction::CloseResult { connection }),
+            on_result: callback!(|connection: Uid| TcpAction::CloseResult { connection }),
         }),
         Err(error) => panic!(
             "Error de-registering connection {:?}: {}",
@@ -539,11 +489,11 @@ fn handle_connect_result(
                 unreachable!()
             };
 
-            dispatcher.dispatch(MioOutputAction::PollRegisterTcpConnection {
+            dispatcher.dispatch(MioAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result: callback!(|(connection: Uid, result: OrError<()>)| {
-                    TcpInputAction::RegisterConnectionResult { connection, result }
+                    TcpAction::RegisterConnectionResult { connection, result }
                 }),
             });
         }
@@ -593,10 +543,10 @@ fn process_pending_connections(
         } else {
             match status {
                 ConnectionStatus::Pending => {
-                    dispatcher.dispatch(MioOutputAction::TcpGetPeerAddress {
+                    dispatcher.dispatch(MioAction::TcpGetPeerAddress {
                         connection: uid,
                         on_result: callback!(|(connection: Uid, result: OrError<String>)| {
-                            TcpInputAction::PeerAddressResult { connection, result }
+                            TcpAction::PeerAddressResult { connection, result }
                         }),
                     });
                     *status = ConnectionStatus::PendingCheck;
@@ -662,12 +612,12 @@ fn process_pending_send_requests_aux(
                     dispatcher.dispatch_back(&on_result, (uid, SendResult::Timeout));
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioOutputAction::TcpWrite {
+                    dispatcher.dispatch(MioAction::TcpWrite {
                         uid,
                         connection: *connection,
                         data: (&data[*bytes_sent..]).into(),
                         on_result: callback!(|(uid: Uid, result: TcpWriteResult)| {
-                            TcpInputAction::SendResult { uid, result }
+                            TcpAction::SendResult { uid, result }
                         }),
                     });
 
@@ -758,12 +708,12 @@ fn input_pending_recv_requests_aux(
                     );
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioOutputAction::TcpRead {
+                    dispatcher.dispatch(MioAction::TcpRead {
                         uid,
                         connection: *connection_uid,
                         len: data.len().saturating_sub(*bytes_received),
                         on_result: callback!(|(uid: Uid, result: TcpReadResult)| {
-                            TcpInputAction::RecvResult { uid, result }
+                            TcpAction::RecvResult { uid, result }
                         }),
                     });
 
@@ -816,7 +766,7 @@ fn handle_poll_result(
             for mio_event in events.iter() {
                 tcp_state.update_events(mio_event)
             }
-            
+
             if events.len() > 0 {
                 process_pending_connections(current_time, tcp_state, dispatcher);
                 process_pending_send_requests(current_time, tcp_state, dispatcher);
@@ -857,13 +807,13 @@ fn handle_poll_result(
                 unreachable!()
             };
 
-            dispatcher.dispatch(MioOutputAction::PollEvents {
+            dispatcher.dispatch(MioAction::PollEvents {
                 uid,
                 poll,
                 events,
                 timeout: timeout.clone(),
                 on_result: callback!(|(uid: Uid, result: PollResult)| {
-                    TcpInputAction::PollResult { uid, result }
+                    TcpAction::PollResult { uid, result }
                 }),
             })
         }
@@ -893,12 +843,12 @@ fn dispatch_send(
 
     match conn.events() {
         ConnectionEvent::Ready { can_send: true, .. } => {
-            dispatcher.dispatch(MioOutputAction::TcpWrite {
+            dispatcher.dispatch(MioAction::TcpWrite {
                 uid,
                 connection: *connection,
                 data: (&data[*bytes_sent..]).into(),
                 on_result: callback!(|(uid: Uid, result: TcpWriteResult)| {
-                    TcpInputAction::SendResult { uid, result }
+                    TcpAction::SendResult { uid, result }
                 }),
             });
         }
@@ -1045,12 +995,12 @@ fn dispatch_recv(
 
     match conn.events() {
         ConnectionEvent::Ready { can_recv: true, .. } => {
-            dispatcher.dispatch(MioOutputAction::TcpRead {
+            dispatcher.dispatch(MioAction::TcpRead {
                 uid,
                 connection: *connection,
                 len: data.len().saturating_sub(*bytes_received),
                 on_result: callback!(|(uid: Uid, result: TcpReadResult)| {
-                    TcpInputAction::RecvResult { uid, result }
+                    TcpAction::RecvResult { uid, result }
                 }),
             });
         }
@@ -1240,10 +1190,10 @@ fn init(
         poll,
         on_result,
     };
-    dispatcher.dispatch(MioOutputAction::PollCreate {
+    dispatcher.dispatch(MioAction::PollCreate {
         poll,
         on_result: callback!(|(poll: Uid, result: OrError<()>)| {
-            TcpInputAction::PollCreateResult { poll, result }
+            TcpAction::PollCreateResult { poll, result }
         }),
     });
 }
@@ -1258,11 +1208,11 @@ fn listen(
     assert!(tcp_state.is_ready());
 
     tcp_state.new_listener(tcp_listener, address.clone(), on_result);
-    dispatcher.dispatch(MioOutputAction::TcpListen {
+    dispatcher.dispatch(MioAction::TcpListen {
         tcp_listener,
         address,
         on_result: callback!(|(tcp_listener: Uid, result: OrError<()>)| {
-            TcpInputAction::ListenResult {
+            TcpAction::ListenResult {
                 tcp_listener,
                 result,
             }
@@ -1285,11 +1235,11 @@ fn accept(
     let direction = ConnectionDirection::Incoming { tcp_listener };
 
     tcp_state.new_connection(connection, direction, TimeoutAbsolute::Never, on_result);
-    dispatcher.dispatch(MioOutputAction::TcpAccept {
+    dispatcher.dispatch(MioAction::TcpAccept {
         connection,
         tcp_listener,
         on_result: callback!(|(connection: Uid, result: TcpAcceptResult)| {
-            TcpInputAction::AcceptResult { connection, result }
+            TcpAction::AcceptResult { connection, result }
         }),
     });
 }
@@ -1310,11 +1260,11 @@ fn connect(
         timeout,
         on_result,
     );
-    dispatcher.dispatch(MioOutputAction::TcpConnect {
+    dispatcher.dispatch(MioAction::TcpConnect {
         connection,
         address,
         on_result: callback!(|(connection: Uid, result: OrError<()>)| {
-            TcpInputAction::ConnectResult { connection, result }
+            TcpAction::ConnectResult { connection, result }
         }),
     });
 }
@@ -1336,11 +1286,11 @@ fn close(
     };
 
     // before closing the stream we remove it from the poll object
-    dispatcher.dispatch(MioOutputAction::PollDeregisterTcpConnection {
+    dispatcher.dispatch(MioAction::PollDeregisterTcpConnection {
         poll,
         connection,
         on_result: callback!(|(connection: Uid, result: OrError<()>)| {
-            TcpInputAction::DeregisterConnectionResult { connection, result }
+            TcpAction::DeregisterConnectionResult { connection, result }
         }),
     });
 }
@@ -1358,13 +1308,13 @@ fn poll(
     };
 
     tcp_state.new_poll(uid, objects, timeout.clone(), on_result);
-    dispatcher.dispatch(MioOutputAction::PollEvents {
+    dispatcher.dispatch(MioAction::PollEvents {
         uid,
         poll,
         events,
         timeout,
         on_result: callback!(|(uid: Uid, result: PollResult)| {
-            TcpInputAction::PollResult { uid, result }
+            TcpAction::PollResult { uid, result }
         }),
     })
 }

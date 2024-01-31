@@ -1,31 +1,31 @@
-use super::{action::TimeOutputAction, state::TimeState};
+use super::{action::TimeAction, state::TimeState};
 use crate::automaton::{
     action::Dispatcher,
-    model::{Output, OutputModel},
+    model::{Effectful, EffectfulModel},
     runner::{RegisterModel, RunnerBuilder},
     state::ModelState,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// This is an `OutputModel` responsible for handling time-related actions.
+// This is an `EffectfulModel` responsible for handling time-related actions.
 //
 // As of now, it supports one action: getting the system time.
 //
 // The `GetSystemTime` action gets the current system time since the UNIX_EPOCH
-// and dispatches the result back as an `InputAction`` defined by the caller.
+// and dispatches the result back as an `PureAction` defined by the caller.
 
 impl RegisterModel for TimeState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder.model_output(Output::<Self>(Self()))
+        builder.model_effectful(Effectful::<Self>(Self()))
     }
 }
 
-impl OutputModel for TimeState {
-    type Action = TimeOutputAction;
+impl EffectfulModel for TimeState {
+    type Action = TimeAction;
 
-    fn process_output(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
+    fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            TimeOutputAction::GetSystemTime { uid, on_result } => {
+            TimeAction::GetSystemTime { uid, on_result } => {
                 let result = if dispatcher.is_replayer() {
                     Duration::default() // Ignored
                 } else {

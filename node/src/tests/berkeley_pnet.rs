@@ -4,7 +4,7 @@ use crate::automaton::state::ModelState;
 use crate::models::pure::net::pnet::client::state::PnetClientConfig;
 use crate::models::pure::net::pnet::common::PnetKey;
 use crate::models::pure::prng::state::{PRNGConfig, PRNGState};
-use crate::models::pure::tests::simple_client_pnet::action::SimpleClientTickAction;
+use crate::models::pure::tests::simple_client_pnet::action::SimpleClientAction;
 use crate::models::pure::{
     net::{
         pnet::client::state::PnetClientState, tcp::state::TcpState,
@@ -73,7 +73,7 @@ fn connect() {
                     recv_nonce_timeout: Timeout::Millis(2000),
                 },
             }),
-            || SimpleClientTickAction().into(),
+            || SimpleClientAction::Tick.into(),
         )
         .build()
         .run()

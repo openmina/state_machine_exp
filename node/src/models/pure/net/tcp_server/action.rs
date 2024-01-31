@@ -11,7 +11,7 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "9bb1c88e-71c8-4a55-8074-cd3dd939a1fb"]
-pub enum TcpServerPureAction {
+pub enum TcpServerAction {
     New {
         address: String,
         server: Uid,
@@ -20,13 +20,29 @@ pub enum TcpServerPureAction {
         on_close_connection: Redispatch<(Uid, Uid)>, // (server_uid, connection_uid)
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
+    NewResult {
+        server: Uid,
+        result: OrError<()>,
+    },
     Poll {
         uid: Uid,
         timeout: Timeout,
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
+    PollResult {
+        uid: Uid,
+        result: TcpPollResult,
+    },
+    AcceptResult {
+        connection: Uid,
+        result: ConnectionResult,
+    },
     Close {
         connection: Uid,
+    },
+    CloseResult {
+        connection: Uid,
+        notify: bool,
     },
     Send {
         uid: Uid,
@@ -39,6 +55,10 @@ pub enum TcpServerPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, SendResult)>,
     },
+    SendResult {
+        uid: Uid,
+        result: SendResult,
+    },
     Recv {
         uid: Uid,
         connection: Uid,
@@ -46,46 +66,14 @@ pub enum TcpServerPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, RecvResult)>,
     },
-}
-
-//#[typetag::serde]
-impl Action for TcpServerPureAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "577ab1fe-220a-489b-a8c3-c63b5b7bbf9a"]
-pub enum TcpServerInputAction {
-    NewResult {
-        server: Uid,
-        result: OrError<()>,
-    },
-    PollResult {
-        uid: Uid,
-        result: TcpPollResult,
-    },
-    AcceptResult {
-        connection: Uid,
-        result: ConnectionResult,
-    },
-    CloseResult {
-        connection: Uid,
-        notify: bool,
-    },
-    SendResult {
-        uid: Uid,
-        result: SendResult,
-    },
     RecvResult {
         uid: Uid,
         result: RecvResult,
     },
 }
 
-impl Action for TcpServerInputAction {
+impl Action for TcpServerAction {
     fn kind(&self) -> ActionKind {
-        ActionKind::Input
+        ActionKind::Pure
     }
 }

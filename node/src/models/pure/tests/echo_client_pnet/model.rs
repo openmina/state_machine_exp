@@ -1,18 +1,18 @@
 use super::{
-    action::{PnetEchoClientInputAction, PnetEchoClientTickAction},
+    action::PnetEchoClientAction,
     state::{EchoClientConfig, PnetEchoClientState, SendRequest},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, OrError, Timeout},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::{
-        net::pnet::client::{action::PnetClientPureAction, state::PnetClientState},
-        net::tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpPureAction},
+        net::pnet::client::{action::PnetClientAction, state::PnetClientState},
+        net::tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpAction},
         prng::state::PRNGState,
         tests::echo_client_pnet::state::RecvRequest,
         time::model::update_time,
@@ -27,58 +27,49 @@ impl RegisterModel for PnetEchoClientState {
         builder
             .register::<PRNGState>()
             .register::<PnetClientState>()
-            .model_pure_and_input::<Self>()
+            .model_pure::<Self>()
     }
 }
 
 impl PureModel for PnetEchoClientState {
-    type Action = PnetEchoClientTickAction;
+    type Action = PnetEchoClientAction;
 
     fn process_pure<Substate: ModelState>(
-        state: &mut State<Substate>,
-        _action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        // Top-most model first task is to update the state-machine time.
-        if update_time(state, dispatcher) {
-            // The next `EchoClientPureAction::Tick` will have the updated time.
-            return;
-        }
-
-        let PnetEchoClientState { ready, config, .. } = state.substate_mut();
-
-        if !*ready {
-            // Init TCP model
-            dispatcher.dispatch(TcpPureAction::Init {
-                instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
-                    PnetEchoClientInputAction::InitResult { instance, result }
-                }),
-            })
-        } else {
-            let timeout = Timeout::Millis(config.poll_timeout);
-            // If the client is already initialized then we poll on each "tick".
-            dispatcher.dispatch(PnetClientPureAction::Poll {
-                uid: state.new_uid(),
-                timeout,
-                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                    PnetEchoClientInputAction::PollResult { uid, result }
-                }),
-            })
-        }
-    }
-}
-
-impl InputModel for PnetEchoClientState {
-    type Action = PnetEchoClientInputAction;
-
-    fn process_input<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
         match action {
-            PnetEchoClientInputAction::InitResult { result, .. } => match result {
+            PnetEchoClientAction::Tick => {
+                // Top-most model first task is to update the state-machine time.
+                if update_time(state, dispatcher) {
+                    // The next `EchoClientPureAction::Tick` will have the updated time.
+                    return;
+                }
+
+                let PnetEchoClientState { ready, config, .. } = state.substate_mut();
+
+                if !*ready {
+                    // Init TCP model
+                    dispatcher.dispatch(TcpAction::Init {
+                        instance: state.new_uid(),
+                        on_result: callback!(|(instance: Uid, result: OrError<()>)| {
+                            PnetEchoClientAction::InitResult { instance, result }
+                        }),
+                    })
+                } else {
+                    let timeout = Timeout::Millis(config.poll_timeout);
+                    // If the client is already initialized then we poll on each "tick".
+                    dispatcher.dispatch(PnetClientAction::Poll {
+                        uid: state.new_uid(),
+                        timeout,
+                        on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
+                            PnetEchoClientAction::PollResult { uid, result }
+                        }),
+                    })
+                }
+            }
+            PnetEchoClientAction::InitResult { result, .. } => match result {
                 Ok(_) => {
                     let connection = state.new_uid();
                     let client_state: &mut PnetEchoClientState = state.substate_mut();
@@ -88,7 +79,7 @@ impl InputModel for PnetEchoClientState {
                 }
                 Err(error) => panic!("Client initialization failed: {}", error),
             },
-            PnetEchoClientInputAction::ConnectResult { connection, result } => match result {
+            PnetEchoClientAction::ConnectResult { connection, result } => match result {
                 ConnectResult::Success => {
                     let client_state: &mut PnetEchoClientState = state.substate_mut();
 
@@ -118,7 +109,7 @@ impl InputModel for PnetEchoClientState {
                     )
                 }
             },
-            PnetEchoClientInputAction::Closed { connection } => {
+            PnetEchoClientAction::Closed { connection } => {
                 info!("|ECHO_CLIENT| connection {:?} closed", connection);
 
                 let connection = state.new_uid();
@@ -127,7 +118,7 @@ impl InputModel for PnetEchoClientState {
                 client_state.connection = None;
                 connect(client_state, dispatcher, connection);
             }
-            PnetEchoClientInputAction::PollResult { uid, result, .. } => match result {
+            PnetEchoClientAction::PollResult { uid, result, .. } => match result {
                 Ok(_) => {
                     // Send random data on every poll if there are no pending send/recv requests.
                     if let PnetEchoClientState {
@@ -143,7 +134,7 @@ impl InputModel for PnetEchoClientState {
                 }
                 Err(error) => panic!("Poll {:?} failed: {}", uid, error),
             },
-            PnetEchoClientInputAction::SendResult { uid, result } => {
+            PnetEchoClientAction::SendResult { uid, result } => {
                 let client_state: &mut PnetEchoClientState = state.substate_mut();
                 let connection = client_state
                     .connection
@@ -164,7 +155,7 @@ impl InputModel for PnetEchoClientState {
                         request.data,
                     ),
                     SendResult::Timeout => {
-                        dispatcher.dispatch(PnetClientPureAction::Close { connection });
+                        dispatcher.dispatch(PnetClientAction::Close { connection });
                         warn!("|ECHO_CLIENT| send {:?} timeout", uid)
                     }
                     SendResult::Error(error) => {
@@ -172,7 +163,7 @@ impl InputModel for PnetEchoClientState {
                     }
                 };
             }
-            PnetEchoClientInputAction::RecvResult { uid, result } => {
+            PnetEchoClientAction::RecvResult { uid, result } => {
                 let client_state: &mut PnetEchoClientState = state.substate_mut();
                 let connection = client_state
                     .connection
@@ -197,7 +188,7 @@ impl InputModel for PnetEchoClientState {
                         info!("|ECHO_CLIENT| recv {:?} data matches what was sent", uid);
                     }
                     RecvResult::Timeout(_) => {
-                        dispatcher.dispatch(PnetClientPureAction::Close { connection });
+                        dispatcher.dispatch(PnetClientAction::Close { connection });
                         warn!("|ECHO_CLIENT| recv {:?} timeout", uid)
                     }
                     RecvResult::Error(error) => {
@@ -220,15 +211,15 @@ fn connect(client_state: &PnetEchoClientState, dispatcher: &mut Dispatcher, conn
         ..
     } = client_state;
 
-    dispatcher.dispatch(PnetClientPureAction::Connect {
+    dispatcher.dispatch(PnetClientAction::Connect {
         connection,
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
         on_close_connection: callback!(|connection: Uid| {
-            PnetEchoClientInputAction::Closed { connection }
+            PnetEchoClientAction::Closed { connection }
         }),
         on_result: callback!(|(connection: Uid, result: ConnectResult)| {
-            PnetEchoClientInputAction::ConnectResult {
+            PnetEchoClientAction::ConnectResult {
                 connection,
                 result
             }
@@ -277,13 +268,13 @@ fn send_random_data_to_server<Substate: ModelState>(
         data: random_data.into(),
     };
 
-    dispatcher.dispatch(PnetClientPureAction::Send {
+    dispatcher.dispatch(PnetClientAction::Send {
         uid: request.uid.clone(),
         connection,
         data: request.data.clone(),
         timeout: Timeout::Millis(200),
         on_result: callback!(|(uid: Uid, result: SendResult)| {
-            PnetEchoClientInputAction::SendResult { uid, result }
+            PnetEchoClientAction::SendResult { uid, result }
         }),
     });
 
@@ -318,13 +309,13 @@ fn recv_from_server_with_random_timeout<Substate: ModelState>(
         uid, count, connection, timeout
     );
 
-    dispatcher.dispatch(PnetClientPureAction::Recv {
+    dispatcher.dispatch(PnetClientAction::Recv {
         uid,
         connection,
         count,
         timeout,
         on_result: callback!(|(uid: Uid, result: RecvResult)| {
-            PnetEchoClientInputAction::RecvResult { uid, result }
+            PnetEchoClientAction::RecvResult { uid, result }
         }),
     });
 

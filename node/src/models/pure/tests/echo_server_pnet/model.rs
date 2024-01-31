@@ -1,20 +1,17 @@
-use super::{
-    action::{PnetEchoServerInputAction, PnetEchoServerTickAction},
-    state::PnetEchoServerState,
-};
+use super::{action::PnetEchoServerAction, state::PnetEchoServerState};
 use crate::models::pure::tests::echo_server_pnet::state::Connection;
 use crate::{automaton::action::OrError, models::pure::net::pnet::server::state::PnetServerState};
 use crate::{
     automaton::{
         action::{Dispatcher, Timeout},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::{
-        net::pnet::server::action::PnetServerPureAction,
-        net::tcp::action::{RecvResult, SendResult, TcpPureAction},
+        net::pnet::server::action::PnetServerAction,
+        net::tcp::action::{RecvResult, SendResult, TcpAction},
         time::model::update_time,
     },
 };
@@ -22,107 +19,96 @@ use log::{info, warn};
 
 impl RegisterModel for PnetEchoServerState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder
-            .register::<PnetServerState>()
-            .model_pure_and_input::<Self>()
+        builder.register::<PnetServerState>().model_pure::<Self>()
     }
 }
 
 impl PureModel for PnetEchoServerState {
-    type Action = PnetEchoServerTickAction;
+    type Action = PnetEchoServerAction;
 
     fn process_pure<Substate: ModelState>(
-        state: &mut State<Substate>,
-        _action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        if update_time(state, dispatcher) {
-            return;
-        }
-
-        let PnetEchoServerState { ready, config, .. } = state.substate_mut();
-
-        if !*ready {
-            dispatcher.dispatch(TcpPureAction::Init {
-                instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
-                    PnetEchoServerInputAction::InitResult { instance, result }
-                }),
-            })
-        } else {
-            let timeout = Timeout::Millis(config.poll_timeout);
-
-            dispatcher.dispatch(PnetServerPureAction::Poll {
-                uid: state.new_uid(),
-                timeout,
-                on_result: callback!(|(uid: Uid, result: OrError<()>)| {
-                    PnetEchoServerInputAction::PollResult { uid, result }
-                }),
-            })
-        }
-    }
-}
-
-impl InputModel for PnetEchoServerState {
-    type Action = PnetEchoServerInputAction;
-
-    fn process_input<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
         match action {
-            PnetEchoServerInputAction::InitResult { result, .. } => match result {
+            PnetEchoServerAction::Tick => {
+                if update_time(state, dispatcher) {
+                    return;
+                }
+
+                let PnetEchoServerState { ready, config, .. } = state.substate_mut();
+
+                if !*ready {
+                    dispatcher.dispatch(TcpAction::Init {
+                        instance: state.new_uid(),
+                        on_result: callback!(|(instance: Uid, result: OrError<()>)| {
+                            PnetEchoServerAction::InitResult { instance, result }
+                        }),
+                    })
+                } else {
+                    let timeout = Timeout::Millis(config.poll_timeout);
+
+                    dispatcher.dispatch(PnetServerAction::Poll {
+                        uid: state.new_uid(),
+                        timeout,
+                        on_result: callback!(|(uid: Uid, result: OrError<()>)| {
+                            PnetEchoServerAction::PollResult { uid, result }
+                        }),
+                    })
+                }
+            }
+            PnetEchoServerAction::InitResult { result, .. } => match result {
                 Ok(_) => {
                     let PnetEchoServerState { config, .. } = state.substate();
                     let address = config.address.clone();
                     let max_connections = config.max_connections;
 
                     // Init PnetServer model
-                    dispatcher.dispatch(PnetServerPureAction::New {
+                    dispatcher.dispatch(PnetServerAction::New {
                         server: state.new_uid(),
                         address,
                         max_connections,
                         on_new_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            PnetEchoServerInputAction::NewConnection { connection }
+                            PnetEchoServerAction::NewConnection { connection }
                         }),
                         on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
-                            PnetEchoServerInputAction::Closed { connection }
+                            PnetEchoServerAction::Closed { connection }
                         }),
                         on_result: callback!(|(server: Uid, result: OrError<()>)| {
-                            PnetEchoServerInputAction::NewServerResult { server, result }
+                            PnetEchoServerAction::NewServerResult { server, result }
                         }),
                     });
                 }
                 Err(error) => panic!("Server initialization failed: {}", error),
             },
-            PnetEchoServerInputAction::NewServerResult { result, .. } => match result {
+            PnetEchoServerAction::NewServerResult { result, .. } => match result {
                 Ok(_) => {
                     // Complete EchoServerState initialization
                     state.substate_mut::<PnetEchoServerState>().ready = true;
                 }
                 Err(error) => panic!("Server initialization failed: {}", error),
             },
-            PnetEchoServerInputAction::NewConnection { connection } => {
+            PnetEchoServerAction::NewConnection { connection } => {
                 info!("|ECHO_SERVER| new connection {:?}", connection);
                 state
                     .substate_mut::<PnetEchoServerState>()
                     .new_connection(connection)
             }
-            PnetEchoServerInputAction::Closed { connection } => {
+            PnetEchoServerAction::Closed { connection } => {
                 info!("|ECHO_SERVER| connection {:?} closed", connection);
                 state
                     .substate_mut::<PnetEchoServerState>()
                     .remove_connection(&connection);
             }
-            PnetEchoServerInputAction::PollResult { uid, result, .. } => match result {
+            PnetEchoServerAction::PollResult { uid, result, .. } => match result {
                 Ok(_) => receive_data_from_clients(state, dispatcher),
                 Err(error) => panic!("Poll {:?} failed: {}", uid, error),
             },
-            PnetEchoServerInputAction::RecvResult { uid, result } => {
+            PnetEchoServerAction::RecvResult { uid, result } => {
                 send_back_received_data_to_client(state.substate_mut(), dispatcher, uid, result)
             }
-            PnetEchoServerInputAction::SendResult { uid, result } => {
+            PnetEchoServerAction::SendResult { uid, result } => {
                 let (&connection, Connection { recv_uid }) = state
                     .substate_mut::<PnetEchoServerState>()
                     .find_connection_by_recv_uid(uid);
@@ -132,7 +118,7 @@ impl InputModel for PnetEchoServerState {
                 match result {
                     SendResult::Success => (),
                     SendResult::Timeout => {
-                        dispatcher.dispatch(PnetServerPureAction::Close { connection });
+                        dispatcher.dispatch(PnetServerAction::Close { connection });
                         warn!("|ECHO_SERVER| send {:?} timeout", uid)
                     }
                     SendResult::Error(error) => {
@@ -160,13 +146,13 @@ fn receive_data_from_clients<Substate: ModelState>(
             uid, count, connection, timeout
         );
 
-        dispatcher.dispatch(PnetServerPureAction::Recv {
+        dispatcher.dispatch(PnetServerAction::Recv {
             uid,
             connection,
             count,
             timeout: timeout.clone(),
             on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                PnetEchoServerInputAction::RecvResult { uid, result }
+                PnetEchoServerAction::RecvResult { uid, result }
             }),
         });
 
@@ -189,19 +175,19 @@ fn send_back_received_data_to_client(
         RecvResult::Success(data) | RecvResult::Timeout(data) => {
             // It is OK to get a timeout if it contains partial data (< 1024 bytes)
             if data.len() != 0 {
-                dispatcher.dispatch(PnetServerPureAction::Send {
+                dispatcher.dispatch(PnetServerAction::Send {
                     uid,
                     connection,
                     data: data.into(),
                     timeout: Timeout::Millis(100),
                     on_result: callback!(|(uid: Uid, result: SendResult)| {
-                        PnetEchoServerInputAction::SendResult { uid, result }
+                        PnetEchoServerAction::SendResult { uid, result }
                     }),
                 });
             } else {
                 // On recv errors the connection is closed automatically by the TcpServer model.
                 // Timeouts are not errors, so here we close it explicitly.
-                dispatcher.dispatch(PnetServerPureAction::Close { connection });
+                dispatcher.dispatch(PnetServerAction::Close { connection });
                 warn!("|ECHO_SERVER| recv {:?} timeout", uid)
             }
         }

@@ -1,20 +1,20 @@
 use super::{
-    action::{SimpleClientInputAction, SimpleClientTickAction},
+    action::SimpleClientAction,
     state::{SimpleClientConfig, SimpleClientState},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, OrError, Timeout},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::{
-        net::pnet::client::action::PnetClientPureAction,
+        net::pnet::client::action::PnetClientAction,
         net::{
             pnet::client::state::PnetClientState,
-            tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpPureAction},
+            tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpAction},
         },
         prng::state::PRNGState,
         time::model::update_time,
@@ -28,56 +28,47 @@ impl RegisterModel for SimpleClientState {
         builder
             .register::<PRNGState>()
             .register::<PnetClientState>()
-            .model_pure_and_input::<Self>()
+            .model_pure::<Self>()
     }
 }
 
 impl PureModel for SimpleClientState {
-    type Action = SimpleClientTickAction;
+    type Action = SimpleClientAction;
 
     fn process_pure<Substate: ModelState>(
-        state: &mut State<Substate>,
-        _action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        if update_time(state, dispatcher) {
-            return;
-        }
-
-        let SimpleClientState { ready, config, .. } = state.substate_mut();
-
-        if !*ready {
-            // Init TCP model
-            dispatcher.dispatch(TcpPureAction::Init {
-                instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
-                    SimpleClientInputAction::InitResult { instance, result }
-                }),
-            })
-        } else {
-            let timeout = Timeout::Millis(config.poll_timeout);
-            // If the client is already initialized then we poll on each "tick".
-            dispatcher.dispatch(PnetClientPureAction::Poll {
-                uid: state.new_uid(),
-                timeout,
-                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                    SimpleClientInputAction::PollResult { uid, result }
-                }),
-            })
-        }
-    }
-}
-
-impl InputModel for SimpleClientState {
-    type Action = SimpleClientInputAction;
-
-    fn process_input<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
         match action {
-            SimpleClientInputAction::InitResult { result, .. } => match result {
+            SimpleClientAction::Tick => {
+                if update_time(state, dispatcher) {
+                    return;
+                }
+
+                let SimpleClientState { ready, config, .. } = state.substate_mut();
+
+                if !*ready {
+                    // Init TCP model
+                    dispatcher.dispatch(TcpAction::Init {
+                        instance: state.new_uid(),
+                        on_result: callback!(|(instance: Uid, result: OrError<()>)| {
+                            SimpleClientAction::InitResult { instance, result }
+                        }),
+                    })
+                } else {
+                    let timeout = Timeout::Millis(config.poll_timeout);
+                    // If the client is already initialized then we poll on each "tick".
+                    dispatcher.dispatch(PnetClientAction::Poll {
+                        uid: state.new_uid(),
+                        timeout,
+                        on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
+                            SimpleClientAction::PollResult { uid, result }
+                        }),
+                    })
+                }
+            }
+            SimpleClientAction::InitResult { result, .. } => match result {
                 Ok(_) => {
                     let connection = state.new_uid();
                     let client_state: &mut SimpleClientState = state.substate_mut();
@@ -87,7 +78,7 @@ impl InputModel for SimpleClientState {
                 }
                 Err(error) => panic!("Client initialization failed: {}", error),
             },
-            SimpleClientInputAction::ConnectResult { connection, result } => match result {
+            SimpleClientAction::ConnectResult { connection, result } => match result {
                 ConnectResult::Success => {
                     let client_state: &mut SimpleClientState = state.substate_mut();
 
@@ -117,11 +108,11 @@ impl InputModel for SimpleClientState {
                     )
                 }
             },
-            SimpleClientInputAction::Closed { connection } => {
+            SimpleClientAction::Closed { connection } => {
                 info!("|PNET_CLIENT| connection {:?} closed", connection);
                 dispatcher.halt()
             }
-            SimpleClientInputAction::PollResult { uid, result, .. } => match result {
+            SimpleClientAction::PollResult { uid, result, .. } => match result {
                 Ok(_) => {
                     if let SimpleClientState {
                         connection: Some(connection),
@@ -145,13 +136,13 @@ impl InputModel for SimpleClientState {
                             let send_data = send_data.clone();
                             let uid = state.new_uid();
 
-                            dispatcher.dispatch(PnetClientPureAction::Send {
+                            dispatcher.dispatch(PnetClientAction::Send {
                                 uid,
                                 connection,
                                 data: send_data,
                                 timeout: Timeout::Millis(2000),
                                 on_result: callback!(|(uid: Uid, result: SendResult)| {
-                                    SimpleClientInputAction::SendResult { uid, result }
+                                    SimpleClientAction::SendResult { uid, result }
                                 }),
                             });
 
@@ -161,13 +152,13 @@ impl InputModel for SimpleClientState {
                         if recv_request.is_none() {
                             let uid = state.new_uid();
 
-                            dispatcher.dispatch(PnetClientPureAction::Recv {
+                            dispatcher.dispatch(PnetClientAction::Recv {
                                 uid,
                                 connection,
                                 count,
                                 timeout: Timeout::Millis(2000),
                                 on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                                    SimpleClientInputAction::RecvResult { uid, result }
+                                    SimpleClientAction::RecvResult { uid, result }
                                 }),
                             });
 
@@ -177,7 +168,7 @@ impl InputModel for SimpleClientState {
                 }
                 Err(error) => panic!("Poll {:?} failed: {}", uid, error),
             },
-            SimpleClientInputAction::SendResult { uid, result } => {
+            SimpleClientAction::SendResult { uid, result } => {
                 let client_state: &mut SimpleClientState = state.substate_mut();
                 let connection = client_state
                     .connection
@@ -191,7 +182,7 @@ impl InputModel for SimpleClientState {
                 match result {
                     SendResult::Success => (),
                     SendResult::Timeout => {
-                        dispatcher.dispatch(PnetClientPureAction::Close { connection });
+                        dispatcher.dispatch(PnetClientAction::Close { connection });
                         warn!("|PNET_CLIENT| send {:?} timeout", uid)
                     }
                     SendResult::Error(error) => {
@@ -199,7 +190,7 @@ impl InputModel for SimpleClientState {
                     }
                 };
             }
-            SimpleClientInputAction::RecvResult { uid, result } => {
+            SimpleClientAction::RecvResult { uid, result } => {
                 let client_state: &mut SimpleClientState = state.substate_mut();
                 let connection = client_state
                     .connection
@@ -212,14 +203,14 @@ impl InputModel for SimpleClientState {
 
                 match result {
                     RecvResult::Success(data_received) => {
-                        dispatcher.dispatch(PnetClientPureAction::Close { connection });
+                        dispatcher.dispatch(PnetClientAction::Close { connection });
                         info!(
                             "|PNET_CLIENT| recv: {}",
                             String::from_utf8(data_received).unwrap()
                         )
                     }
                     RecvResult::Timeout(partial_data) => {
-                        dispatcher.dispatch(PnetClientPureAction::Close { connection });
+                        dispatcher.dispatch(PnetClientAction::Close { connection });
                         info!(
                             "|PNET_CLIENT| recv (timeout): {}",
                             String::from_utf8(partial_data).unwrap()
@@ -245,15 +236,15 @@ fn connect(client_state: &SimpleClientState, dispatcher: &mut Dispatcher, connec
         ..
     } = client_state;
 
-    dispatcher.dispatch(PnetClientPureAction::Connect {
+    dispatcher.dispatch(PnetClientAction::Connect {
         connection,
         address: connect_to_address.clone(),
         timeout: timeout.clone(),
         on_close_connection: callback!(|connection: Uid| {
-            SimpleClientInputAction::Closed { connection }
+            SimpleClientAction::Closed { connection }
         }),
         on_result: callback!(|(connection: Uid, result: ConnectResult)| {
-            SimpleClientInputAction::ConnectResult {
+            SimpleClientAction::ConnectResult {
                 connection,
                 result
             }

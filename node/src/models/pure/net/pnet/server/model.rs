@@ -1,11 +1,11 @@
 use super::{
-    action::{PnetServerInputAction, PnetServerPureAction},
+    action::PnetServerAction,
     state::{Connection, PnetServerState, Server},
 };
 use crate::{
     automaton::{
         action::{Dispatcher, OrError, Redispatch, Timeout},
-        model::{InputModel, PureModel},
+        model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
@@ -14,7 +14,7 @@ use crate::{
         net::{
             pnet::common::{ConnectionState, XSalsa20Wrapper},
             tcp::action::{RecvResult, SendResult},
-            tcp_server::{action::TcpServerPureAction, state::TcpServerState},
+            tcp_server::{action::TcpServerAction, state::TcpServerState},
         },
         prng::state::PRNGState,
     },
@@ -27,148 +27,123 @@ impl RegisterModel for PnetServerState {
         builder
             .register::<PRNGState>() // FIXME: replace with effectful
             .register::<TcpServerState>()
-            .model_pure_and_input::<Self>()
-    }
-}
-
-enum Act {
-    In(PnetServerInputAction),
-    Pure(PnetServerPureAction),
-}
-
-fn process_action<Substate: ModelState>(
-    state: &mut State<Substate>,
-    action: Act,
-    dispatcher: &mut Dispatcher,
-) {
-    match action {
-        Act::Pure(PnetServerPureAction::Poll {
-            uid,
-            timeout,
-            on_result,
-        }) => dispatcher.dispatch(TcpServerPureAction::Poll {
-            uid,
-            timeout,
-            on_result,
-        }),
-        Act::Pure(PnetServerPureAction::New {
-            address,
-            server,
-            max_connections,
-            on_new_connection,
-            on_close_connection,
-            on_result,
-        }) => {
-            state.substate_mut::<PnetServerState>().new_server(
-                server,
-                on_new_connection,
-                on_close_connection,
-                on_result,
-            );
-
-            dispatcher.dispatch(TcpServerPureAction::New {
-                address,
-                server,
-                max_connections,
-                on_new_connection: callback!(|(server: Uid, connection: Uid)| {
-                    PnetServerInputAction::NewConnection { server, connection }
-                }),
-                on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
-                    PnetServerInputAction::Closed { connection }
-                }),
-                on_result: callback!(|(server: Uid, result: OrError<()>)| {
-                    PnetServerInputAction::NewResult { server, result }
-                }),
-            });
-        }
-        Act::In(PnetServerInputAction::NewResult { server, result }) => {
-            let server_state: &mut PnetServerState = state.substate_mut();
-            let Server { on_result, .. } = server_state.get_server(&server);
-
-            dispatcher.dispatch_back(on_result, (server, result.clone()));
-
-            if result.is_err() {
-                server_state.remove_server(&server)
-            }
-        }
-        Act::In(PnetServerInputAction::NewConnection { server, connection }) => {
-            let server_state: &mut PnetServerState = state.substate_mut();
-
-            server_state.new_connection(server, connection);
-            send_nonce(state, server, connection, dispatcher)
-        }
-        Act::In(PnetServerInputAction::SendNonceResult { uid, result }) => match result {
-            SendResult::Success => recv_nonce(state, uid, dispatcher),
-            SendResult::Timeout => handle_handshake_timeout(state, uid, dispatcher),
-            SendResult::Error(_) => (),
-        },
-        Act::In(PnetServerInputAction::RecvNonceResult { uid, result }) => match result {
-            RecvResult::Success(nonce) => complete_connection(state, uid, nonce, dispatcher),
-            RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
-            RecvResult::Error(_) => (),
-        },
-        Act::In(PnetServerInputAction::Closed { connection }) => {
-            let server_state = state.substate_mut::<PnetServerState>();
-            handle_connection_closed(server_state, connection, dispatcher)
-        }
-        Act::Pure(PnetServerPureAction::Close { connection }) => {
-            dispatcher.dispatch(TcpServerPureAction::Close { connection })
-        }
-        Act::Pure(PnetServerPureAction::Send {
-            uid,
-            connection,
-            data,
-            timeout,
-            on_result,
-        }) => encrypt_and_send(state, uid, connection, data, timeout, on_result, dispatcher),
-        Act::Pure(PnetServerPureAction::Recv {
-            uid,
-            connection,
-            count,
-            timeout,
-            on_result,
-        }) => {
-            state
-                .substate_mut::<PnetServerState>()
-                .new_recv_request(&uid, connection, on_result);
-
-            dispatcher.dispatch(TcpServerPureAction::Recv {
-                uid,
-                connection,
-                count,
-                timeout,
-                on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                    PnetServerInputAction::RecvResult { uid, result }
-                }),
-            })
-        }
-        Act::In(PnetServerInputAction::RecvResult { uid, result }) => {
-            recv_and_decrypt(state, uid, result, dispatcher)
-        }
-    }
-}
-
-impl InputModel for PnetServerState {
-    type Action = PnetServerInputAction;
-
-    fn process_input<Substate: ModelState>(
-        state: &mut State<Substate>,
-        action: Self::Action,
-        dispatcher: &mut Dispatcher,
-    ) {
-        process_action(state, Act::In(action), dispatcher)
+            .model_pure::<Self>()
     }
 }
 
 impl PureModel for PnetServerState {
-    type Action = PnetServerPureAction;
+    type Action = PnetServerAction;
 
     fn process_pure<Substate: ModelState>(
         state: &mut State<Substate>,
         action: Self::Action,
         dispatcher: &mut Dispatcher,
     ) {
-        process_action(state, Act::Pure(action), dispatcher)
+        match action {
+            PnetServerAction::Poll {
+                uid,
+                timeout,
+                on_result,
+            } => dispatcher.dispatch(TcpServerAction::Poll {
+                uid,
+                timeout,
+                on_result,
+            }),
+            PnetServerAction::New {
+                address,
+                server,
+                max_connections,
+                on_new_connection,
+                on_close_connection,
+                on_result,
+            } => {
+                state.substate_mut::<PnetServerState>().new_server(
+                    server,
+                    on_new_connection,
+                    on_close_connection,
+                    on_result,
+                );
+
+                dispatcher.dispatch(TcpServerAction::New {
+                    address,
+                    server,
+                    max_connections,
+                    on_new_connection: callback!(|(server: Uid, connection: Uid)| {
+                        PnetServerAction::NewConnection { server, connection }
+                    }),
+                    on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
+                        PnetServerAction::Closed { connection }
+                    }),
+                    on_result: callback!(|(server: Uid, result: OrError<()>)| {
+                        PnetServerAction::NewResult { server, result }
+                    }),
+                });
+            }
+            PnetServerAction::NewResult { server, result } => {
+                let server_state: &mut PnetServerState = state.substate_mut();
+                let Server { on_result, .. } = server_state.get_server(&server);
+
+                dispatcher.dispatch_back(on_result, (server, result.clone()));
+
+                if result.is_err() {
+                    server_state.remove_server(&server)
+                }
+            }
+            PnetServerAction::NewConnection { server, connection } => {
+                let server_state: &mut PnetServerState = state.substate_mut();
+
+                server_state.new_connection(server, connection);
+                send_nonce(state, server, connection, dispatcher)
+            }
+            PnetServerAction::SendNonceResult { uid, result } => match result {
+                SendResult::Success => recv_nonce(state, uid, dispatcher),
+                SendResult::Timeout => handle_handshake_timeout(state, uid, dispatcher),
+                SendResult::Error(_) => (),
+            },
+            PnetServerAction::RecvNonceResult { uid, result } => match result {
+                RecvResult::Success(nonce) => complete_connection(state, uid, nonce, dispatcher),
+                RecvResult::Timeout(_) => handle_handshake_timeout(state, uid, dispatcher),
+                RecvResult::Error(_) => (),
+            },
+            PnetServerAction::Closed { connection } => {
+                let server_state = state.substate_mut::<PnetServerState>();
+                handle_connection_closed(server_state, connection, dispatcher)
+            }
+            PnetServerAction::Close { connection } => {
+                dispatcher.dispatch(TcpServerAction::Close { connection })
+            }
+            PnetServerAction::Send {
+                uid,
+                connection,
+                data,
+                timeout,
+                on_result,
+            } => encrypt_and_send(state, uid, connection, data, timeout, on_result, dispatcher),
+            PnetServerAction::Recv {
+                uid,
+                connection,
+                count,
+                timeout,
+                on_result,
+            } => {
+                state
+                    .substate_mut::<PnetServerState>()
+                    .new_recv_request(&uid, connection, on_result);
+
+                dispatcher.dispatch(TcpServerAction::Recv {
+                    uid,
+                    connection,
+                    count,
+                    timeout,
+                    on_result: callback!(|(uid: Uid, result: RecvResult)| {
+                        PnetServerAction::RecvResult { uid, result }
+                    }),
+                })
+            }
+            PnetServerAction::RecvResult { uid, result } => {
+                recv_and_decrypt(state, uid, result, dispatcher)
+            }
+        }
     }
 }
 
@@ -187,13 +162,13 @@ fn send_nonce<Substate: ModelState>(
 
     assert!(matches!(conn.state, ConnectionState::Init));
 
-    dispatcher.dispatch(TcpServerPureAction::Send {
+    dispatcher.dispatch(TcpServerAction::Send {
         uid,
         connection,
         data: nonce.into(),
         timeout,
         on_result: callback!(|(uid: Uid, result: SendResult)| {
-            PnetServerInputAction::SendNonceResult { uid, result }
+            PnetServerAction::SendNonceResult { uid, result }
         }),
     });
 
@@ -213,13 +188,13 @@ fn recv_nonce<Substate: ModelState>(
     let (&server, &connection, _) = server_state.find_connection_by_nonce_request(&uid);
     let uid = state.new_uid();
 
-    dispatcher.dispatch(TcpServerPureAction::Recv {
+    dispatcher.dispatch(TcpServerAction::Recv {
         uid,
         connection,
         count: 24,
         timeout,
         on_result: callback!(|(uid: Uid, result: RecvResult)| {
-            PnetServerInputAction::RecvNonceResult { uid, result }
+            PnetServerAction::RecvNonceResult { uid, result }
         }),
     });
 
@@ -275,8 +250,8 @@ fn handle_handshake_timeout<Substate: ModelState>(
     let client_state = state.substate_mut::<PnetServerState>();
     let (_, &connection, _) = client_state.find_connection_by_nonce_request(&uid);
 
-    // Rest of logic handled by `PnetServerInputAction::Closed`
-    dispatcher.dispatch(TcpServerPureAction::Close { connection });
+    // Rest of logic handled by `PnetServerAction::Closed`
+    dispatcher.dispatch(TcpServerAction::Close { connection });
 }
 
 fn handle_connection_closed(
@@ -321,7 +296,7 @@ fn encrypt_and_send<Substate: ModelState>(
     };
     let mut data = data.clone();
     send_cipher.apply_keystream(&mut data);
-    dispatcher.dispatch(TcpServerPureAction::Send {
+    dispatcher.dispatch(TcpServerAction::Send {
         uid,
         connection,
         data: data.into(),

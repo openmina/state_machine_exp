@@ -9,18 +9,9 @@ use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "7c21da23-66af-423a-ad67-ad5d02631251"]
-pub struct EchoServerTickAction();
-
-impl Action for EchoServerTickAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "04f45d4b-7484-4fe5-a6b2-651ef7e58ca9"]
-pub enum EchoServerInputAction {
+pub enum EchoServerAction {
+    Tick,
     InitResult { instance: Uid, result: OrError<()> },
     NewServerResult { server: Uid, result: OrError<()> },
     NewConnection { connection: Uid },
@@ -30,8 +21,8 @@ pub enum EchoServerInputAction {
     SendResult { uid: Uid, result: SendResult },
 }
 
-impl Action for EchoServerInputAction {
+impl Action for EchoServerAction {
     fn kind(&self) -> ActionKind {
-        ActionKind::Input
+        ActionKind::Pure
     }
 }

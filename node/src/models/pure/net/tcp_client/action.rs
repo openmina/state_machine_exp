@@ -11,13 +11,17 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "f15cd869-0966-4ab5-881c-530bc0fe95e6"]
-pub enum TcpClientPureAction {
+pub enum TcpClientAction {
     Connect {
         connection: Uid,
         address: String,
         timeout: Timeout,
         on_close_connection: Redispatch<Uid>,
         on_result: Redispatch<(Uid, ConnectionResult)>,
+    },
+    ConnectResult {
+        connection: Uid,
+        result: ConnectionResult,
     },
     Poll {
         uid: Uid,
@@ -26,6 +30,10 @@ pub enum TcpClientPureAction {
     },
     Close {
         connection: Uid,
+    },
+    CloseResult {
+        connection: Uid,
+        notify: bool,
     },
     Send {
         uid: Uid,
@@ -38,6 +46,10 @@ pub enum TcpClientPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, SendResult)>,
     },
+    SendResult {
+        uid: Uid,
+        result: SendResult,
+    },
     Recv {
         uid: Uid,
         connection: Uid,
@@ -45,37 +57,14 @@ pub enum TcpClientPureAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, RecvResult)>,
     },
-}
-
-impl Action for TcpClientPureAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
-#[uuid = "830b3ab4-d5c9-44f3-9366-7486bb5b52b2"]
-pub enum TcpClientInputAction {
-    ConnectResult {
-        connection: Uid,
-        result: ConnectionResult,
-    },
-    CloseResult {
-        connection: Uid,
-        notify: bool,
-    },
-    SendResult {
-        uid: Uid,
-        result: SendResult,
-    },
     RecvResult {
         uid: Uid,
         result: RecvResult,
     },
 }
 
-impl Action for TcpClientInputAction {
+impl Action for TcpClientAction {
     fn kind(&self) -> ActionKind {
-        ActionKind::Input
+        ActionKind::Pure
     }
 }

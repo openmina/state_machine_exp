@@ -11,11 +11,11 @@ use crate::{
         prng::state::{PRNGConfig, PRNGState},
         tests::{
             echo_client::{
-                action::EchoClientTickAction,
+                action::EchoClientAction,
                 state::{EchoClientConfig, EchoClientState},
             },
             echo_server::{
-                action::EchoServerTickAction,
+                action::EchoServerAction,
                 state::{EchoServerConfig, EchoServerState},
             },
         },
@@ -90,7 +90,7 @@ fn echo_server_1_client() {
                 poll_timeout: 100,
                 recv_timeout: 500,
             })),
-            || EchoServerTickAction().into(),
+            || EchoServerAction::Tick.into(),
         )
         .instance(
             EchoNetwork::EchoClient(EchoClient::from_config(EchoClientConfig {
@@ -103,7 +103,7 @@ fn echo_server_1_client() {
                 min_rnd_timeout: 1000,
                 max_rnd_timeout: 10000,
             })),
-            || EchoClientTickAction().into(),
+            || EchoClientAction::Tick.into(),
         )
         .build()
         .run()
@@ -119,7 +119,7 @@ fn echo_server_n_clients(n_clients: u64) {
                 poll_timeout: 100 / n_clients,
                 recv_timeout: 500 * n_clients,
             })),
-            || EchoServerTickAction().into(),
+            || EchoServerAction::Tick.into(),
         );
 
     for _ in 0..n_clients {
@@ -134,7 +134,7 @@ fn echo_server_n_clients(n_clients: u64) {
                 min_rnd_timeout: 1000,
                 max_rnd_timeout: 1000 * n_clients,
             })),
-            || EchoClientTickAction().into(),
+            || EchoClientAction::Tick.into(),
         );
     }
 

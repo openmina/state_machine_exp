@@ -17,11 +17,11 @@ use crate::{
         prng::state::{PRNGConfig, PRNGState},
         tests::{
             echo_client_pnet::{
-                action::PnetEchoClientTickAction,
+                action::PnetEchoClientAction,
                 state::{EchoClientConfig, PnetEchoClientState},
             },
             echo_server_pnet::{
-                action::PnetEchoServerTickAction,
+                action::PnetEchoServerAction,
                 state::{EchoServerConfig, PnetEchoServerState},
             },
         },
@@ -118,7 +118,7 @@ fn echo_server_1_client() {
                     recv_nonce_timeout: Timeout::Millis(500),
                 },
             })),
-            || PnetEchoServerTickAction().into(),
+            || PnetEchoServerAction::Tick.into(),
         )
         .instance(
             EchoNetwork::PnetEchoClient(PnetEchoClient::from_config(PnetEchoClientConfig {
@@ -138,7 +138,7 @@ fn echo_server_1_client() {
                     recv_nonce_timeout: Timeout::Millis(500),
                 },
             })),
-            || PnetEchoClientTickAction().into(),
+            || PnetEchoClientAction::Tick.into(),
         )
         .build()
         .run()
@@ -161,7 +161,7 @@ fn echo_server_n_clients(n_clients: u64) {
                     recv_nonce_timeout: Timeout::Millis(500 * n_clients),
                 },
             })),
-            || PnetEchoServerTickAction().into(),
+            || PnetEchoServerAction::Tick.into(),
         );
 
     for _ in 0..n_clients {
@@ -183,7 +183,7 @@ fn echo_server_n_clients(n_clients: u64) {
                     recv_nonce_timeout: Timeout::Millis(500 * n_clients),
                 },
             })),
-            || PnetEchoClientTickAction().into(),
+            || PnetEchoClientAction::Tick.into(),
         );
     }
 
