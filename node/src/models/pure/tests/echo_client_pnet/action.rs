@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind},
+        action::{Action, ActionKind, OrError},
         state::Uid,
     },
     models::pure::net::tcp::action::{ConnectResult, RecvResult, SendResult, TcpPollResult},
@@ -23,7 +23,7 @@ impl Action for PnetEchoClientTickAction {
 pub enum PnetEchoClientInputAction {
     InitResult {
         instance: Uid,
-        result: Result<(), String>,
+        result: OrError<()>,
     },
     ConnectResult {
         connection: Uid,

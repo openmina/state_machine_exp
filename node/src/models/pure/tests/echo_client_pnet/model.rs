@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, Timeout},
+        action::{Dispatcher, OrError, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -12,9 +12,7 @@ use crate::{
     callback,
     models::pure::{
         net::pnet::client::{action::PnetClientPureAction, state::PnetClientState},
-        net::tcp::action::{
-            ConnectResult, Event, RecvResult, SendResult, TcpPureAction,
-        },
+        net::tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpPureAction},
         prng::state::PRNGState,
         tests::echo_client_pnet::state::RecvRequest,
         time::model::update_time,
@@ -53,7 +51,7 @@ impl PureModel for PnetEchoClientState {
             // Init TCP model
             dispatcher.dispatch(TcpPureAction::Init {
                 instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
                     PnetEchoClientInputAction::InitResult { instance, result }
                 }),
             })
@@ -63,7 +61,7 @@ impl PureModel for PnetEchoClientState {
             dispatcher.dispatch(PnetClientPureAction::Poll {
                 uid: state.new_uid(),
                 timeout,
-                on_result: callback!(|(uid: Uid, result: Result<Vec<(Uid, Event)>, String>)| {
+                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
                     PnetEchoClientInputAction::PollResult { uid, result }
                 }),
             })
@@ -90,38 +88,36 @@ impl InputModel for PnetEchoClientState {
                 }
                 Err(error) => panic!("Client initialization failed: {}", error),
             },
-            PnetEchoClientInputAction::ConnectResult { connection, result } => {
-                match result {
-                    ConnectResult::Success => {
-                        let client_state: &mut PnetEchoClientState = state.substate_mut();
+            PnetEchoClientInputAction::ConnectResult { connection, result } => match result {
+                ConnectResult::Success => {
+                    let client_state: &mut PnetEchoClientState = state.substate_mut();
 
-                        client_state.connection_attempt = 0;
-                        client_state.connection = Some(connection);
-                    }
-                    ConnectResult::Timeout => {
-                        let new_connection_uid = state.new_uid();
-
-                        reconnect(
-                            state.substate_mut(),
-                            dispatcher,
-                            connection,
-                            new_connection_uid,
-                            "timeout".to_string(),
-                        )
-                    }
-                    ConnectResult::Error(error) => {
-                        let new_connection_uid = state.new_uid();
-
-                        reconnect(
-                            state.substate_mut(),
-                            dispatcher,
-                            connection,
-                            new_connection_uid,
-                            error,
-                        )
-                    }
+                    client_state.connection_attempt = 0;
+                    client_state.connection = Some(connection);
                 }
-            }
+                ConnectResult::Timeout => {
+                    let new_connection_uid = state.new_uid();
+
+                    reconnect(
+                        state.substate_mut(),
+                        dispatcher,
+                        connection,
+                        new_connection_uid,
+                        "timeout".to_string(),
+                    )
+                }
+                ConnectResult::Error(error) => {
+                    let new_connection_uid = state.new_uid();
+
+                    reconnect(
+                        state.substate_mut(),
+                        dispatcher,
+                        connection,
+                        new_connection_uid,
+                        error,
+                    )
+                }
+            },
             PnetEchoClientInputAction::Closed { connection } => {
                 info!("|ECHO_CLIENT| connection {:?} closed", connection);
 

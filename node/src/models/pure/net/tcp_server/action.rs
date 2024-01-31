@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{self, Action, ActionKind, ResultDispatch, Timeout},
+        action::{self, Action, ActionKind, OrError, Redispatch, Timeout},
         state::Uid,
     },
     models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
@@ -16,14 +16,14 @@ pub enum TcpServerPureAction {
         address: String,
         server: Uid,
         max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
-        on_close_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
+        on_close_connection: Redispatch<(Uid, Uid)>, // (server_uid, connection_uid)
+        on_result: Redispatch<(Uid, OrError<()>)>,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     },
     Close {
         connection: Uid,
@@ -37,14 +37,14 @@ pub enum TcpServerPureAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: Redispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     },
 }
 
@@ -60,7 +60,7 @@ impl Action for TcpServerPureAction {
 pub enum TcpServerInputAction {
     NewResult {
         server: Uid,
-        result: Result<(), String>,
+        result: OrError<()>,
     },
     PollResult {
         uid: Uid,

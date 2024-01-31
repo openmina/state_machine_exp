@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{ResultDispatch, Timeout},
+        action::{OrError, Redispatch, Timeout},
         state::{Objects, Uid},
     },
     models::pure::net::{
@@ -17,17 +17,17 @@ pub struct Connection {
 
 #[derive(Debug)]
 pub struct Server {
-    pub on_new_connection: ResultDispatch<(Uid, Uid)>,
-    pub on_close_connection: ResultDispatch<(Uid, Uid)>,
-    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    pub on_new_connection: Redispatch<(Uid, Uid)>,
+    pub on_close_connection: Redispatch<(Uid, Uid)>,
+    pub on_result: Redispatch<(Uid, OrError<()>)>,
     pub connections: Objects<Connection>,
 }
 
 impl Server {
     pub fn new(
-        on_new_connection: ResultDispatch<(Uid, Uid)>,
-        on_close_connection: ResultDispatch<(Uid, Uid)>,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_close_connection: Redispatch<(Uid, Uid)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     ) -> Self {
         Self {
             on_new_connection,
@@ -68,9 +68,9 @@ impl PnetServerState {
     pub fn new_server(
         &mut self,
         server: Uid,
-        on_new_connection: ResultDispatch<(Uid, Uid)>,
-        on_close_connection: ResultDispatch<(Uid, Uid)>,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_close_connection: Redispatch<(Uid, Uid)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     ) {
         if self
             .server_objects
@@ -169,7 +169,7 @@ impl PnetServerState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests

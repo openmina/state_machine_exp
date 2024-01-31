@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind},
+        action::{Action, ActionKind, OrError},
         state::Uid,
     },
     models::pure::net::tcp::action::{RecvResult, SendResult},
@@ -21,32 +21,13 @@ impl Action for EchoServerTickAction {
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "04f45d4b-7484-4fe5-a6b2-651ef7e58ca9"]
 pub enum EchoServerInputAction {
-    InitResult {
-        instance: Uid,
-        result: Result<(), String>,
-    },
-    NewServerResult {
-        server: Uid,
-        result: Result<(), String>,
-    },
-    NewConnection {
-        connection: Uid,
-    },
-    Closed {
-        connection: Uid,
-    },
-    PollResult {
-        uid: Uid,
-        result: Result<(), String>,
-    },
-    RecvResult {
-        uid: Uid,
-        result: RecvResult,
-    },
-    SendResult {
-        uid: Uid,
-        result: SendResult,
-    },
+    InitResult { instance: Uid, result: OrError<()> },
+    NewServerResult { server: Uid, result: OrError<()> },
+    NewConnection { connection: Uid },
+    Closed { connection: Uid },
+    PollResult { uid: Uid, result: OrError<()> },
+    RecvResult { uid: Uid, result: RecvResult },
+    SendResult { uid: Uid, result: SendResult },
 }
 
 impl Action for EchoServerInputAction {

@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::ResultDispatch,
+        action::{OrError, Redispatch},
         state::{Objects, Uid},
     },
     models::pure::net::tcp::action::{RecvResult, SendResult},
@@ -10,18 +10,18 @@ use std::{collections::BTreeSet, mem};
 #[derive(Debug)]
 pub struct Server {
     pub max_connections: usize,
-    pub on_new_connection: ResultDispatch<(Uid, Uid)>,
-    pub on_close_connection: ResultDispatch<(Uid, Uid)>,
-    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    pub on_new_connection: Redispatch<(Uid, Uid)>,
+    pub on_close_connection: Redispatch<(Uid, Uid)>,
+    pub on_result: Redispatch<(Uid, OrError<()>)>,
     pub connections: BTreeSet<Uid>,
 }
 
 impl Server {
     pub fn new(
         max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>,
-        on_close_connection: ResultDispatch<(Uid, Uid)>,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_close_connection: Redispatch<(Uid, Uid)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     ) -> Self {
         Self {
             max_connections,
@@ -40,18 +40,18 @@ impl Server {
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, SendResult)>,
+    pub on_result: Redispatch<(Uid, SendResult)>,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, RecvResult)>,
+    pub on_result: Redispatch<(Uid, RecvResult)>,
 }
 
 #[derive(Debug)]
 pub struct PollRequest {
-    pub on_result: ResultDispatch<(Uid, Result<(), String>)>,
+    pub on_result: Redispatch<(Uid, OrError<()>)>,
 }
 
 #[derive(Debug)]
@@ -85,7 +85,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: Redispatch<(Uid, SendResult)>,
     ) {
         if self
             .send_requests
@@ -112,7 +112,7 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests
@@ -152,9 +152,9 @@ impl TcpServerState {
         &mut self,
         server: Uid,
         max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>,
-        on_close_connection: ResultDispatch<(Uid, Uid)>,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_close_connection: Redispatch<(Uid, Uid)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     ) {
         if self
             .server_objects

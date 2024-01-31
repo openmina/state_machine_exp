@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, ResultDispatch, Timeout},
+        action::{Dispatcher, OrError, Redispatch, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -76,7 +76,7 @@ fn process_action<Substate: ModelState>(
                 on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
                     PnetServerInputAction::Closed { connection }
                 }),
-                on_result: callback!(|(server: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(server: Uid, result: OrError<()>)| {
                     PnetServerInputAction::NewResult { server, result }
                 }),
             });
@@ -310,7 +310,7 @@ fn encrypt_and_send<Substate: ModelState>(
     connection: Uid,
     data: Vec<u8>,
     timeout: Timeout,
-    on_result: ResultDispatch<(Uid, SendResult)>,
+    on_result: Redispatch<(Uid, SendResult)>,
     dispatcher: &mut Dispatcher,
 ) {
     let server_state = state.substate_mut::<PnetServerState>();

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, ResultDispatch, Timeout},
+        action::{Dispatcher, Redispatch, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -324,7 +324,7 @@ fn encrypt_and_send<Substate: ModelState>(
     connection: Uid,
     data: Vec<u8>,
     timeout: Timeout,
-    on_result: ResultDispatch<(Uid, SendResult)>,
+    on_result: Redispatch<(Uid, SendResult)>,
     dispatcher: &mut Dispatcher,
 ) {
     let conn = state

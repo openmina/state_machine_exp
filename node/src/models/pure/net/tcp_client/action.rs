@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{self, Action, ActionKind, ResultDispatch, Timeout},
+        action::{self, Action, ActionKind, Redispatch, Timeout},
         state::Uid,
     },
     models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
@@ -16,13 +16,13 @@ pub enum TcpClientPureAction {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_close_connection: ResultDispatch<Uid>,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_close_connection: Redispatch<Uid>,
+        on_result: Redispatch<(Uid, ConnectionResult)>,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, TcpPollResult)>,
+        on_result: Redispatch<(Uid, TcpPollResult)>,
     },
     Close {
         connection: Uid,
@@ -36,14 +36,14 @@ pub enum TcpClientPureAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: Redispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     },
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::ResultDispatch,
+        action::Redispatch,
         state::{Objects, Uid},
     },
     models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult},
@@ -8,20 +8,20 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Connection {
-    pub on_close_connection: ResultDispatch<Uid>,
-    pub on_result: ResultDispatch<(Uid, ConnectionResult)>,
+    pub on_close_connection: Redispatch<Uid>,
+    pub on_result: Redispatch<(Uid, ConnectionResult)>,
 }
 
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, SendResult)>,
+    pub on_result: Redispatch<(Uid, SendResult)>,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: ResultDispatch<(Uid, RecvResult)>,
+    pub on_result: Redispatch<(Uid, RecvResult)>,
 }
 
 #[derive(Debug)]
@@ -48,8 +48,8 @@ impl TcpClientState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: ResultDispatch<Uid>,
-        on_result: ResultDispatch<(Uid, ConnectionResult)>,
+        on_close_connection: Redispatch<Uid>,
+        on_result: Redispatch<(Uid, ConnectionResult)>,
     ) {
         if self
             .connections
@@ -77,7 +77,7 @@ impl TcpClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: Redispatch<(Uid, SendResult)>,
     ) {
         if self
             .send_requests
@@ -104,7 +104,7 @@ impl TcpClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests

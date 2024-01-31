@@ -2,8 +2,8 @@ use super::{
     action::{PnetEchoServerInputAction, PnetEchoServerTickAction},
     state::PnetEchoServerState,
 };
-use crate::models::pure::net::pnet::server::state::PnetServerState;
 use crate::models::pure::tests::echo_server_pnet::state::Connection;
+use crate::{automaton::action::OrError, models::pure::net::pnet::server::state::PnetServerState};
 use crate::{
     automaton::{
         action::{Dispatcher, Timeout},
@@ -45,7 +45,7 @@ impl PureModel for PnetEchoServerState {
         if !*ready {
             dispatcher.dispatch(TcpPureAction::Init {
                 instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
                     PnetEchoServerInputAction::InitResult { instance, result }
                 }),
             })
@@ -55,7 +55,7 @@ impl PureModel for PnetEchoServerState {
             dispatcher.dispatch(PnetServerPureAction::Poll {
                 uid: state.new_uid(),
                 timeout,
-                on_result: callback!(|(uid: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(uid: Uid, result: OrError<()>)| {
                     PnetEchoServerInputAction::PollResult { uid, result }
                 }),
             })
@@ -89,7 +89,7 @@ impl InputModel for PnetEchoServerState {
                         on_close_connection: callback!(|(_server: Uid, connection: Uid)| {
                             PnetEchoServerInputAction::Closed { connection }
                         }),
-                        on_result: callback!(|(server: Uid, result: Result<(), String>)| {
+                        on_result: callback!(|(server: Uid, result: OrError<()>)| {
                             PnetEchoServerInputAction::NewServerResult { server, result }
                         }),
                     });

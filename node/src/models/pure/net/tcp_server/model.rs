@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::Dispatcher,
+        action::{Dispatcher, OrError},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -63,7 +63,7 @@ fn process_action<Substate: ModelState>(
             dispatcher.dispatch(TcpPureAction::Listen {
                 tcp_listener: server,
                 address,
-                on_result: callback!(|(server: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(server: Uid, result: OrError<()>)| {
                     TcpServerInputAction::NewResult { server, result }
                 }),
             });
@@ -91,7 +91,7 @@ fn process_action<Substate: ModelState>(
                 uid,
                 objects,
                 timeout,
-                on_result: callback!(|(uid: Uid, result: Result<Vec<(Uid, Event)>, String>)| {
+                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
                     TcpServerInputAction::PollResult { uid, result }
                 }),
             })

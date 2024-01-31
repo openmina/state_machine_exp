@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind, ResultDispatch, Timeout},
+        action::{Action, ActionKind, OrError, Redispatch, Timeout},
         state::Uid,
     },
     models::pure::net::tcp::action::{RecvResult, SendResult},
@@ -15,14 +15,14 @@ pub enum PnetServerPureAction {
         address: String,
         server: Uid,
         max_connections: usize,
-        on_new_connection: ResultDispatch<(Uid, Uid)>,
-        on_close_connection: ResultDispatch<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_close_connection: Redispatch<(Uid, Uid)>, // (server_uid, connection_uid)
+        on_result: Redispatch<(Uid, OrError<()>)>,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, Result<(), String>)>,
+        on_result: Redispatch<(Uid, OrError<()>)>,
     },
     Close {
         connection: Uid,
@@ -32,14 +32,14 @@ pub enum PnetServerPureAction {
         connection: Uid,
         data: Vec<u8>,
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, SendResult)>,
+        on_result: Redispatch<(Uid, SendResult)>,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     },
 }
 
@@ -52,29 +52,12 @@ impl Action for PnetServerPureAction {
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "9c55db43-3a8e-4ac0-b52e-221b7b87206b"]
 pub enum PnetServerInputAction {
-    NewResult {
-        server: Uid,
-        result: Result<(), String>,
-    },
-    NewConnection {
-        server: Uid,
-        connection: Uid,
-    },
-    SendNonceResult {
-        uid: Uid,
-        result: SendResult,
-    },
-    RecvNonceResult {
-        uid: Uid,
-        result: RecvResult,
-    },
-    Closed {
-        connection: Uid,
-    },
-    RecvResult {
-        uid: Uid,
-        result: RecvResult,
-    },
+    NewResult { server: Uid, result: OrError<()> },
+    NewConnection { server: Uid, connection: Uid },
+    SendNonceResult { uid: Uid, result: SendResult },
+    RecvNonceResult { uid: Uid, result: RecvResult },
+    Closed { connection: Uid },
+    RecvResult { uid: Uid, result: RecvResult },
 }
 
 impl Action for PnetServerInputAction {

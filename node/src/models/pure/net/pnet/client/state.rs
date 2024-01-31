@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{ResultDispatch, Timeout},
+        action::{Redispatch, Timeout},
         state::{Objects, Uid},
     },
     models::pure::net::{
@@ -13,8 +13,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Connection {
     pub state: ConnectionState,
-    pub on_close_connection: ResultDispatch<Uid>,
-    pub on_result: ResultDispatch<(Uid, ConnectResult)>,
+    pub on_close_connection: Redispatch<Uid>,
+    pub on_result: Redispatch<(Uid, ConnectResult)>,
 }
 
 #[derive(Debug)]
@@ -70,8 +70,8 @@ impl PnetClientState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: ResultDispatch<Uid>,
-        on_result: ResultDispatch<(Uid, ConnectResult)>,
+        on_close_connection: Redispatch<Uid>,
+        on_result: Redispatch<(Uid, ConnectResult)>,
     ) {
         if self
             .connections
@@ -100,7 +100,7 @@ impl PnetClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: ResultDispatch<(Uid, RecvResult)>,
+        on_result: Redispatch<(Uid, RecvResult)>,
     ) {
         if self
             .recv_requests

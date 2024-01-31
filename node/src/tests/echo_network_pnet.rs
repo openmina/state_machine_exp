@@ -187,7 +187,7 @@ fn echo_server_n_clients(n_clients: u64) {
         );
     }
 
-    builder.build().record("echo_network_pnet")
+    builder.build().run()
 }
 
 #[test]

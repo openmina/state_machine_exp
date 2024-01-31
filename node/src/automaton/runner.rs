@@ -110,8 +110,13 @@ impl<Substate: ModelState> Runner<Substate> {
         loop {
             for instance in 0..self.dispatchers.len() {
                 self.state.set_current_instance(instance);
+                let dispatcher = &mut self.dispatchers[instance];
 
-                let action = self.dispatchers[instance].next_action();
+                if dispatcher.is_halted() {
+                    return
+                }
+
+                let action = dispatcher.next_action();
                 self.process_action(action, instance)
             }
         }

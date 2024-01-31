@@ -1,5 +1,5 @@
 use crate::automaton::{
-    action::{Action, ActionKind, ResultDispatch},
+    action::{Action, ActionKind, Redispatch},
     state::Uid,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use type_uuid::TypeUuid;
 pub enum TimeOutputAction {
     GetSystemTime {
         uid: Uid,
-        on_result: ResultDispatch<(Uid, Duration)>,
+        on_result: Redispatch<(Uid, Duration)>,
     },
 }
 

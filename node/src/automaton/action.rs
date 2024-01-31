@@ -13,6 +13,8 @@ use std::{
 };
 use type_uuid::TypeUuidDynamic;
 
+use super::state::Uid;
+
 #[derive(PartialEq, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum Timeout {
     Millis(u64),
@@ -24,6 +26,8 @@ pub enum TimeoutAbsolute {
     Millis(u128),
     Never,
 }
+
+pub type OrError<T> = Result<T, String>;
 
 pub fn serialize_rc_bytes<S>(data: &Rc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -128,17 +132,17 @@ pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug +
 }
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct ResultDispatch<R> {
+pub struct Redispatch<R> {
     pub fun_name: String,
     #[serde(skip)]
     result_type: std::marker::PhantomData<R>,
 }
 
-impl<R> ResultDispatch<R> {
+impl<R> Redispatch<R> {
     pub fn new(name: &str) -> Self {
         Self {
             fun_name: name.to_string(),
-            result_type: Default::default()
+            result_type: Default::default(),
         }
     }
 
@@ -153,7 +157,7 @@ impl<R> ResultDispatch<R> {
     }
 }
 
-impl<R> fmt::Debug for ResultDispatch<R> {
+impl<R> fmt::Debug for Redispatch<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "...")
     }
@@ -161,6 +165,8 @@ impl<R> fmt::Debug for ResultDispatch<R> {
 
 pub struct Dispatcher {
     queue: VecDeque<AnyAction>,
+    halt: bool,
+
     // This is a caller-defined function that produces and dispatches an action
     // when the action queue is empty. To the state-mache, the "tick" action is
     // analogous to the clock-cycle of a CPU.
@@ -188,6 +194,7 @@ impl Dispatcher {
     pub fn new(tick: fn() -> AnyAction) -> Self {
         Self {
             queue: VecDeque::with_capacity(1024),
+            halt: false,
             tick,
             depth: 0,
             action_id: 0,
@@ -195,6 +202,14 @@ impl Dispatcher {
             record_file: None,
             replay_file: None,
         }
+    }
+
+    pub fn halt(&mut self) {
+        self.halt = true;
+    }
+
+    pub fn is_halted(&self) -> bool {
+        self.halt
     }
 
     pub fn next_action(&mut self) -> AnyAction {
@@ -258,7 +273,7 @@ impl Dispatcher {
     }
 
     #[track_caller]
-    pub fn dispatch_back<R: Clone>(&mut self, on_result: &ResultDispatch<R>, result: R)
+    pub fn dispatch_back<R: Clone>(&mut self, on_result: &Redispatch<R>, result: R)
     where
         R: Sized + 'static,
     {
@@ -285,7 +300,7 @@ pub static CALLBACKS: [(&str, fn(&str, Box<dyn Any>) -> AnyAction)];
 #[macro_export]
 macro_rules! _callback {
     ($gensym:ident, $arg:tt, $arg_type:ty, $body:expr) => {{
-        use crate::automaton::action::ResultDispatch;
+        use crate::automaton::action::Redispatch;
         use crate::automaton::action::{AnyAction, CALLBACKS};
         use linkme::distributed_slice;
 
@@ -307,7 +322,7 @@ macro_rules! _callback {
             }
         }
 
-        ResultDispatch::<$arg_type>::new(stringify!($gensym))
+        Redispatch::<$arg_type>::new(stringify!($gensym))
     }};
 }
 

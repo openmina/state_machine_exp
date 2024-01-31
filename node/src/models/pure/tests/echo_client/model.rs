@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, Timeout},
+        action::{Dispatcher, OrError, Timeout},
         model::{InputModel, PureModel},
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -94,7 +94,7 @@ impl PureModel for EchoClientState {
             // Init TCP model
             dispatcher.dispatch(TcpPureAction::Init {
                 instance: state.new_uid(),
-                on_result: callback!(|(instance: Uid, result: Result<(), String>)| {
+                on_result: callback!(|(instance: Uid, result: OrError<()>)| {
                     EchoClientInputAction::InitResult { instance, result }
                 }),
             })
@@ -104,7 +104,7 @@ impl PureModel for EchoClientState {
             dispatcher.dispatch(TcpClientPureAction::Poll {
                 uid: state.new_uid(),
                 timeout,
-                on_result: callback!(|(uid: Uid, result: Result<Vec<(Uid, Event)>, String>)| {
+                on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
                     EchoClientInputAction::PollResult { uid, result }
                 }),
             })

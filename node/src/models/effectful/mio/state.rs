@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use crate::automaton::action::Timeout;
+use crate::automaton::action::{OrError, Timeout};
 use crate::automaton::state::{Objects, Uid};
 
 use super::action::{MioEvent, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
@@ -61,7 +61,7 @@ impl MioState {
         }
     }
 
-    pub fn poll_create(&mut self, uid: Uid) -> Result<(), String> {
+    pub fn poll_create(&mut self, uid: Uid) -> OrError<()> {
         match Poll::new() {
             Ok(poll_obj) => {
                 self.new_poll(uid, poll_obj);
@@ -71,11 +71,7 @@ impl MioState {
         }
     }
 
-    pub fn poll_register_tcp_server(
-        &mut self,
-        poll: &Uid,
-        tcp_listener: Uid,
-    ) -> Result<(), String> {
+    pub fn poll_register_tcp_server(&mut self, poll: &Uid, tcp_listener: Uid) -> OrError<()> {
         let mut tcp_listener_objects = self.tcp_listener_objects.borrow_mut();
 
         let listener = tcp_listener_objects
@@ -95,11 +91,7 @@ impl MioState {
         }
     }
 
-    pub fn poll_register_tcp_connection(
-        &mut self,
-        poll: &Uid,
-        connection: Uid,
-    ) -> Result<(), String> {
+    pub fn poll_register_tcp_connection(&mut self, poll: &Uid, connection: Uid) -> OrError<()> {
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
         let stream = tcp_connection_objects
             .get_mut(&connection)
@@ -121,11 +113,7 @@ impl MioState {
         }
     }
 
-    pub fn poll_deregister_tcp_connection(
-        &mut self,
-        poll: &Uid,
-        connection: Uid,
-    ) -> Result<(), String> {
+    pub fn poll_deregister_tcp_connection(&mut self, poll: &Uid, connection: Uid) -> OrError<()> {
         let mut tcp_connection_objects = self.tcp_connection_objects.borrow_mut();
         let stream = tcp_connection_objects
             .get_mut(&connection)
@@ -189,7 +177,7 @@ impl MioState {
         self.new_events(uid, Events::with_capacity(capacity));
     }
 
-    pub fn tcp_listen(&mut self, uid: Uid, address: String) -> Result<(), String> {
+    pub fn tcp_listen(&mut self, uid: Uid, address: String) -> OrError<()> {
         match address.parse() {
             Ok(address) => match TcpListener::bind(address) {
                 Ok(tcp_listener) => {
@@ -228,7 +216,7 @@ impl MioState {
         }
     }
 
-    pub fn tcp_connect(&mut self, connection: Uid, address: String) -> Result<(), String> {
+    pub fn tcp_connect(&mut self, connection: Uid, address: String) -> OrError<()> {
         match address.parse() {
             Ok(address) => match TcpStream::connect(address) {
                 Ok(stream) => {
@@ -303,7 +291,7 @@ impl MioState {
         }
     }
 
-    pub fn tcp_peer_address(&mut self, connection: &Uid) -> Result<String, String> {
+    pub fn tcp_peer_address(&mut self, connection: &Uid) -> OrError<String> {
         let tcp_connection_objects = self.tcp_connection_objects.borrow();
         let stream = tcp_connection_objects.get(connection).expect(&format!(
             "TCP connection stream object not found {:?}",
