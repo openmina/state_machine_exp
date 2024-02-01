@@ -12,7 +12,9 @@ use crate::{
     callback,
     models::{
         effectful::mio::{
-            action::{MioAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
+            action::{
+                MioEffectfulAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult,
+            },
             state::MioState,
         },
         pure::{
@@ -228,7 +230,7 @@ fn handle_poll_create_result(
     {
         if result.is_ok() {
             // Dispatch next action to continue initialization
-            dispatcher.dispatch(MioAction::EventsCreate {
+            dispatcher.dispatch_effect(MioEffectfulAction::EventsCreate {
                 uid: events,
                 capacity: 1024,
                 on_result: callback!(|uid: Uid| TcpAction::EventsCreateResult { uid }),
@@ -283,7 +285,7 @@ fn handle_listen_result(
             unreachable!()
         };
 
-        dispatcher.dispatch(MioAction::PollRegisterTcpServer {
+        dispatcher.dispatch_effect(MioEffectfulAction::PollRegisterTcpServer {
             poll,
             tcp_listener,
             on_result: callback!(|(tcp_listener: Uid, result: OrError<()>)| {
@@ -347,7 +349,7 @@ fn handle_accept_result(
             };
 
             // We will dispatch-back to the caller from `handle_register_connection_result`
-            dispatcher.dispatch(MioAction::PollRegisterTcpConnection {
+            dispatcher.dispatch_effect(MioEffectfulAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result: callback!(|(connection: Uid, result: OrError<()>)| {
@@ -423,7 +425,7 @@ fn handle_register_connection_result(
         *status = ConnectionStatus::CloseRequest {
             maybe_on_result: None,
         };
-        dispatcher.dispatch(MioAction::TcpClose {
+        dispatcher.dispatch_effect(MioEffectfulAction::TcpClose {
             connection,
             on_result: callback!(|connection: Uid| TcpAction::CloseResult { connection }),
         });
@@ -458,7 +460,7 @@ fn handle_deregister_connection_result(
     result: OrError<()>,
 ) {
     match result {
-        Ok(_) => dispatcher.dispatch(MioAction::TcpClose {
+        Ok(_) => dispatcher.dispatch_effect(MioEffectfulAction::TcpClose {
             connection,
             on_result: callback!(|connection: Uid| TcpAction::CloseResult { connection }),
         }),
@@ -489,7 +491,7 @@ fn handle_connect_result(
                 unreachable!()
             };
 
-            dispatcher.dispatch(MioAction::PollRegisterTcpConnection {
+            dispatcher.dispatch_effect(MioEffectfulAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result: callback!(|(connection: Uid, result: OrError<()>)| {
@@ -543,7 +545,7 @@ fn process_pending_connections(
         } else {
             match status {
                 ConnectionStatus::Pending => {
-                    dispatcher.dispatch(MioAction::TcpGetPeerAddress {
+                    dispatcher.dispatch_effect(MioEffectfulAction::TcpGetPeerAddress {
                         connection: uid,
                         on_result: callback!(|(connection: Uid, result: OrError<String>)| {
                             TcpAction::PeerAddressResult { connection, result }
@@ -612,7 +614,7 @@ fn process_pending_send_requests_aux(
                     dispatcher.dispatch_back(&on_result, (uid, SendResult::Timeout));
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioAction::TcpWrite {
+                    dispatcher.dispatch_effect(MioEffectfulAction::TcpWrite {
                         uid,
                         connection: *connection,
                         data: (&data[*bytes_sent..]).into(),
@@ -708,7 +710,7 @@ fn input_pending_recv_requests_aux(
                     );
                     purge_requests.push(uid);
                 } else {
-                    dispatcher.dispatch(MioAction::TcpRead {
+                    dispatcher.dispatch_effect(MioEffectfulAction::TcpRead {
                         uid,
                         connection: *connection_uid,
                         len: data.len().saturating_sub(*bytes_received),
@@ -807,7 +809,7 @@ fn handle_poll_result(
                 unreachable!()
             };
 
-            dispatcher.dispatch(MioAction::PollEvents {
+            dispatcher.dispatch_effect(MioEffectfulAction::PollEvents {
                 uid,
                 poll,
                 events,
@@ -843,7 +845,7 @@ fn dispatch_send(
 
     match conn.events() {
         ConnectionEvent::Ready { can_send: true, .. } => {
-            dispatcher.dispatch(MioAction::TcpWrite {
+            dispatcher.dispatch_effect(MioEffectfulAction::TcpWrite {
                 uid,
                 connection: *connection,
                 data: (&data[*bytes_sent..]).into(),
@@ -995,7 +997,7 @@ fn dispatch_recv(
 
     match conn.events() {
         ConnectionEvent::Ready { can_recv: true, .. } => {
-            dispatcher.dispatch(MioAction::TcpRead {
+            dispatcher.dispatch_effect(MioEffectfulAction::TcpRead {
                 uid,
                 connection: *connection,
                 len: data.len().saturating_sub(*bytes_received),
@@ -1190,7 +1192,7 @@ fn init(
         poll,
         on_result,
     };
-    dispatcher.dispatch(MioAction::PollCreate {
+    dispatcher.dispatch_effect(MioEffectfulAction::PollCreate {
         poll,
         on_result: callback!(|(poll: Uid, result: OrError<()>)| {
             TcpAction::PollCreateResult { poll, result }
@@ -1208,7 +1210,7 @@ fn listen(
     assert!(tcp_state.is_ready());
 
     tcp_state.new_listener(tcp_listener, address.clone(), on_result);
-    dispatcher.dispatch(MioAction::TcpListen {
+    dispatcher.dispatch_effect(MioEffectfulAction::TcpListen {
         tcp_listener,
         address,
         on_result: callback!(|(tcp_listener: Uid, result: OrError<()>)| {
@@ -1235,7 +1237,7 @@ fn accept(
     let direction = ConnectionDirection::Incoming { tcp_listener };
 
     tcp_state.new_connection(connection, direction, TimeoutAbsolute::Never, on_result);
-    dispatcher.dispatch(MioAction::TcpAccept {
+    dispatcher.dispatch_effect(MioEffectfulAction::TcpAccept {
         connection,
         tcp_listener,
         on_result: callback!(|(connection: Uid, result: TcpAcceptResult)| {
@@ -1260,7 +1262,7 @@ fn connect(
         timeout,
         on_result,
     );
-    dispatcher.dispatch(MioAction::TcpConnect {
+    dispatcher.dispatch_effect(MioEffectfulAction::TcpConnect {
         connection,
         address,
         on_result: callback!(|(connection: Uid, result: OrError<()>)| {
@@ -1286,7 +1288,7 @@ fn close(
     };
 
     // before closing the stream we remove it from the poll object
-    dispatcher.dispatch(MioAction::PollDeregisterTcpConnection {
+    dispatcher.dispatch_effect(MioEffectfulAction::PollDeregisterTcpConnection {
         poll,
         connection,
         on_result: callback!(|(connection: Uid, result: OrError<()>)| {
@@ -1308,7 +1310,7 @@ fn poll(
     };
 
     tcp_state.new_poll(uid, objects, timeout.clone(), on_result);
-    dispatcher.dispatch(MioAction::PollEvents {
+    dispatcher.dispatch_effect(MioEffectfulAction::PollEvents {
         uid,
         poll,
         events,

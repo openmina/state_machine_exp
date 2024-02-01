@@ -38,7 +38,5 @@ pub enum SimpleClientAction {
 }
 
 impl Action for SimpleClientAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

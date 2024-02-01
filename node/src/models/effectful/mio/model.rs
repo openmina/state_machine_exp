@@ -1,4 +1,4 @@
-use super::action::{MioAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
+use super::action::{MioEffectfulAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
 use super::state::MioState;
 use crate::automaton::action::Dispatcher;
 use crate::automaton::model::{Effectful, EffectfulModel};
@@ -29,11 +29,11 @@ impl RegisterModel for MioState {
 }
 
 impl EffectfulModel for MioState {
-    type Action = MioAction;
+    type Action = MioEffectfulAction;
 
     fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            MioAction::PollCreate { poll, on_result } => {
+            MioEffectfulAction::PollCreate { poll, on_result } => {
                 // NOTE: use this pattern to inhibit side-effects when in replay mode
                 let result = if dispatcher.is_replayer() {
                     // This value is ignored and it is replaced by whatever it
@@ -45,7 +45,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (poll, result));
             }
-            MioAction::PollRegisterTcpServer {
+            MioEffectfulAction::PollRegisterTcpServer {
                 poll,
                 tcp_listener,
                 on_result,
@@ -58,7 +58,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
-            MioAction::PollRegisterTcpConnection {
+            MioEffectfulAction::PollRegisterTcpConnection {
                 poll,
                 connection,
                 on_result,
@@ -71,7 +71,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioAction::PollDeregisterTcpConnection {
+            MioEffectfulAction::PollDeregisterTcpConnection {
                 poll,
                 connection,
                 on_result,
@@ -84,7 +84,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioAction::PollEvents {
+            MioEffectfulAction::PollEvents {
                 uid,
                 poll,
                 events,
@@ -99,7 +99,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioAction::EventsCreate {
+            MioEffectfulAction::EventsCreate {
                 uid,
                 capacity,
                 on_result,
@@ -110,7 +110,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, uid);
             }
-            MioAction::TcpListen {
+            MioEffectfulAction::TcpListen {
                 tcp_listener,
                 address,
                 on_result,
@@ -123,7 +123,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (tcp_listener, result));
             }
-            MioAction::TcpAccept {
+            MioEffectfulAction::TcpAccept {
                 connection,
                 tcp_listener,
                 on_result,
@@ -136,7 +136,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioAction::TcpConnect {
+            MioEffectfulAction::TcpConnect {
                 connection,
                 address,
                 on_result,
@@ -149,7 +149,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (connection, result));
             }
-            MioAction::TcpClose {
+            MioEffectfulAction::TcpClose {
                 connection,
                 on_result,
             } => {
@@ -159,7 +159,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, connection);
             }
-            MioAction::TcpWrite {
+            MioEffectfulAction::TcpWrite {
                 uid,
                 connection: connection_uid,
                 data,
@@ -173,7 +173,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioAction::TcpRead {
+            MioEffectfulAction::TcpRead {
                 uid,
                 connection,
                 len,
@@ -187,7 +187,7 @@ impl EffectfulModel for MioState {
 
                 dispatcher.dispatch_back(&on_result, (uid, result));
             }
-            MioAction::TcpGetPeerAddress {
+            MioEffectfulAction::TcpGetPeerAddress {
                 connection,
                 on_result,
             } => {

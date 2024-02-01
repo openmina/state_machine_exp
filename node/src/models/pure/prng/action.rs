@@ -10,7 +10,5 @@ pub enum PRNGPureAction {
 }
 
 impl Action for PRNGPureAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

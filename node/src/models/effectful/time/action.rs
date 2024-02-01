@@ -8,15 +8,13 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "3221c0d5-02f5-4ed6-bf79-29f40c5619f0"]
-pub enum TimeAction {
+pub enum TimeEffectfulAction {
     GetSystemTime {
         uid: Uid,
         on_result: Redispatch<(Uid, Duration)>,
     },
 }
 
-impl Action for TimeAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Effectful
-    }
+impl Action for TimeEffectfulAction {
+    const KIND: ActionKind = ActionKind::Effectful;
 }

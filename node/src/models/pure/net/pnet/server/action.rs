@@ -67,7 +67,5 @@ pub enum PnetServerAction {
 }
 
 impl Action for PnetServerAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

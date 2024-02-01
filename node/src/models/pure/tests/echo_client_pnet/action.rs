@@ -38,7 +38,5 @@ pub enum PnetEchoClientAction {
 }
 
 impl Action for PnetEchoClientAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

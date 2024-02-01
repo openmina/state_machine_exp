@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, Redispatch, Timeout},
+        action::{Action, ActionKind, Dispatcher, Redispatch, Timeout},
         model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
@@ -311,6 +311,7 @@ fn encrypt_and_send<Substate: ModelState>(
     };
     let mut data = data.clone();
     send_cipher.apply_keystream(&mut data);
+    //
     dispatcher.dispatch(TcpClientAction::Send {
         uid,
         connection,

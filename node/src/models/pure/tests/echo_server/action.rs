@@ -22,7 +22,5 @@ pub enum EchoServerAction {
 }
 
 impl Action for EchoServerAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

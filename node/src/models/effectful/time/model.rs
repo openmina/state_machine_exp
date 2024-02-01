@@ -1,4 +1,4 @@
-use super::{action::TimeAction, state::TimeState};
+use super::{action::TimeEffectfulAction, state::TimeState};
 use crate::automaton::{
     action::Dispatcher,
     model::{Effectful, EffectfulModel},
@@ -21,11 +21,11 @@ impl RegisterModel for TimeState {
 }
 
 impl EffectfulModel for TimeState {
-    type Action = TimeAction;
+    type Action = TimeEffectfulAction;
 
     fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            TimeAction::GetSystemTime { uid, on_result } => {
+            TimeEffectfulAction::GetSystemTime { uid, on_result } => {
                 let result = if dispatcher.is_replayer() {
                     Duration::default() // Ignored
                 } else {

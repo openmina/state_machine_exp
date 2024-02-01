@@ -1,5 +1,5 @@
 use super::{
-    action::{ActionKind, AnyAction, Dispatcher},
+    action::{ ActionKind, AnyAction, Dispatcher},
     model::{AnyModel, Effectful, EffectfulModel, PrivateModel, Pure, PureModel},
     state::{ModelState, State},
 };

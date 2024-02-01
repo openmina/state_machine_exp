@@ -23,7 +23,7 @@ use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "6ade1356-d5fe-4c28-8fa9-fe4ee2fffc5f"]
-pub enum MioAction {
+pub enum MioEffectfulAction {
     PollCreate {
         poll: Uid,
         on_result: Redispatch<(Uid, OrError<()>)>,
@@ -99,10 +99,8 @@ pub enum MioAction {
     },
 }
 
-impl Action for MioAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Effectful
-    }
+impl Action for MioEffectfulAction {
+    const KIND: ActionKind = ActionKind::Effectful;
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

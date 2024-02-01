@@ -239,7 +239,6 @@ impl<T: PureModel> PrivateModel for Pure<T> {
     }
 }
 
-
 pub trait EffectfulModel
 where
     Self: Sized + 'static,
@@ -257,7 +256,7 @@ where
     fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher);
 }
 
-pub struct Effectful<T:EffectfulModel>(pub T);
+pub struct Effectful<T: EffectfulModel>(pub T);
 
 impl<T: EffectfulModel> PrivateModel for Effectful<T> {
     fn process_effectful(state: &mut Box<dyn Any>, action: AnyAction, dispatcher: &mut Dispatcher) {
@@ -276,8 +275,9 @@ impl<T: EffectfulModel> PrivateModel for Effectful<T> {
             depth,
             action_id,
             caller,
-            callback: false
-        } = action.dbginfo else {
+            callback: false,
+        } = action.dbginfo
+        else {
             panic!("Can't dispatch_back() an effectful action")
         };
 

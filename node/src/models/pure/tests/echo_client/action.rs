@@ -38,7 +38,5 @@ pub enum EchoClientAction {
 }
 
 impl Action for EchoClientAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

@@ -14,8 +14,6 @@ pub enum TimeAction {
 }
 
 impl Action for TimeAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }
 

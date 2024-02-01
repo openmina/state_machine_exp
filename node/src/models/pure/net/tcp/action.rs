@@ -113,9 +113,7 @@ pub enum TcpAction {
 }
 
 impl Action for TcpAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]

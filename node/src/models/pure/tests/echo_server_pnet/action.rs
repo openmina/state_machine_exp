@@ -22,7 +22,5 @@ pub enum PnetEchoServerAction {
 }
 
 impl Action for PnetEchoServerAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

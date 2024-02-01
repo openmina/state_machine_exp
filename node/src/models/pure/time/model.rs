@@ -1,7 +1,7 @@
 use super::{action::TimeAction, state::TimeState};
 use crate::automaton::runner::{RegisterModel, RunnerBuilder};
 use crate::models::effectful::time::{
-    action::TimeAction as IoTimeAction, state::TimeState as IoTimeState,
+    action::TimeEffectfulAction, state::TimeState as IoTimeState,
 };
 use crate::{
     automaton::{
@@ -58,12 +58,14 @@ impl PureModel for TimeState {
         dispatcher: &mut Dispatcher,
     ) {
         match action {
-            TimeAction::UpdateCurrentTime => dispatcher.dispatch(IoTimeAction::GetSystemTime {
-                uid: state.new_uid(),
-                on_result: callback!(|(uid: Uid, result: Duration)| {
-                    TimeAction::GetSystemTimeResult { uid, result }
-                }),
-            }),
+            TimeAction::UpdateCurrentTime => {
+                dispatcher.dispatch_effect(TimeEffectfulAction::GetSystemTime {
+                    uid: state.new_uid(),
+                    on_result: callback!(|(uid: Uid, result: Duration)| {
+                        TimeAction::GetSystemTimeResult { uid, result }
+                    }),
+                })
+            }
             TimeAction::GetSystemTimeResult { uid: _, result } => {
                 state.substate_mut::<TimeState>().set_time(result);
             }

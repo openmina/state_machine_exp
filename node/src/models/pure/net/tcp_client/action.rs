@@ -64,7 +64,5 @@ pub enum TcpClientAction {
 }
 
 impl Action for TcpClientAction {
-    fn kind(&self) -> ActionKind {
-        ActionKind::Pure
-    }
+    const KIND: ActionKind = ActionKind::Pure;
 }

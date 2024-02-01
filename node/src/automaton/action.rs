@@ -54,16 +54,17 @@ where
 //    but they have their own (minimal) state.
 //
 #[derive(Serialize, Deserialize, Debug)]
+#[repr(u8)]
 pub enum ActionKind {
-    Pure,
-    Effectful,
+    Pure = 0,
+    Effectful = 1,
 }
 
 pub trait Action
 where
     Self: TypeUuidDynamic + fmt::Debug + 'static,
 {
-    fn kind(&self) -> ActionKind;
+    const KIND: ActionKind;
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -91,7 +92,7 @@ impl<T: Action> From<T> for AnyAction {
     fn from(v: T) -> Self {
         Self {
             uuid: v.uuid(),
-            kind: v.kind(),
+            kind: T::KIND,
             ptr: Box::new(v),
             type_name: std::any::type_name::<T>(),
             dbginfo: ActionDebugInfo {
@@ -171,6 +172,13 @@ pub struct Dispatcher {
     pub replay_file: Option<BufReader<File>>,
 }
 
+pub struct IfPure<const K: u8>;
+pub trait True {}
+impl True for IfPure<0> {}
+
+pub trait False {}
+impl False for IfPure<1> {}
+
 impl Dispatcher {
     pub fn new(tick: fn() -> AnyAction) -> Self {
         Self {
@@ -233,8 +241,26 @@ impl Dispatcher {
     pub fn dispatch<A: Action>(&mut self, action: A)
     where
         A: Sized + 'static,
+        IfPure<{ A::KIND as u8 }>: True,
     {
         let location = Location::caller();
+        self.dispatch_common(action, *location)
+    }
+
+    #[track_caller]
+    pub fn dispatch_effect<A: Action>(&mut self, action: A)
+    where
+        A: Sized + 'static,
+        IfPure<{ A::KIND as u8 }>: False,
+    {
+        let location = Location::caller();
+        self.dispatch_common(action, *location)
+    }
+
+    fn dispatch_common<A: Action>(&mut self, action: A, location: Location)
+    where
+        A: Sized + 'static,
+    {
         assert_ne!(TypeId::of::<A>(), TypeId::of::<AnyAction>());
         let mut any_action: AnyAction = action.into();
 
