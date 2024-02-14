@@ -47,7 +47,7 @@ impl EffectfulModel for MioState {
             }
             MioEffectfulAction::PollRegisterTcpServer {
                 poll,
-                tcp_listener,
+                listener: tcp_listener,
                 on_result,
             } => {
                 let result = if dispatcher.is_replayer() {
@@ -111,7 +111,7 @@ impl EffectfulModel for MioState {
                 dispatcher.dispatch_back(&on_result, uid);
             }
             MioEffectfulAction::TcpListen {
-                tcp_listener,
+                listener: tcp_listener,
                 address,
                 on_result,
             } => {
@@ -125,7 +125,7 @@ impl EffectfulModel for MioState {
             }
             MioEffectfulAction::TcpAccept {
                 connection,
-                tcp_listener,
+                listener: tcp_listener,
                 on_result,
             } => {
                 let result = if dispatcher.is_replayer() {

@@ -106,7 +106,7 @@ impl PureModel for TcpServerState {
 
                     dispatcher.dispatch(TcpAction::Accept {
                         connection,
-                        tcp_listener,
+                        listener: tcp_listener,
                         on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
                             TcpServerAction::AcceptResult { connection, result }
                         }),

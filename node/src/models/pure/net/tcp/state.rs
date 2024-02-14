@@ -95,7 +95,7 @@ impl PollRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ConnectionDirection {
-    Incoming { tcp_listener: Uid },
+    Incoming { listener: Uid },
     Outgoing,
 }
 
@@ -228,8 +228,8 @@ impl SendRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub data: Vec<u8>,
-    pub bytes_received: usize,
+    pub buffered_data: Vec<u8>,
+    pub remaining_bytes: usize,
     pub recv_on_poll: bool,
     pub timeout: TimeoutAbsolute,
     pub on_result: Redispatch<(Uid, RecvResult)>,
@@ -245,8 +245,8 @@ impl RecvRequest {
     ) -> Self {
         Self {
             connection,
-            data: vec![0; count],
-            bytes_received: 0,
+            buffered_data: Vec::new(),
+            remaining_bytes: count,
             recv_on_poll,
             timeout,
             on_result,

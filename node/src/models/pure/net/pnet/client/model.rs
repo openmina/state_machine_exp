@@ -78,7 +78,6 @@ impl PureModel for PnetClientState {
             PnetClientAction::ConnectResult { connection, result } => match result {
                 ConnectResult::Success => send_nonce(state, connection, dispatcher),
                 ConnectResult::Timeout | ConnectResult::Error(_) => {
-                    println!("conenct result {:?}", result);
                     handle_connect_error(state, connection, result, dispatcher)
                 }
             },
@@ -175,8 +174,6 @@ fn handle_connect_error<Substate: ModelState>(
 ) {
     let client_state = state.substate_mut::<PnetClientState>();
     let Connection { on_result, .. } = client_state.get_connection(&connection);
-    println!("handle_connect_error {:?}", connection);
-
     dispatcher.dispatch_back(on_result, (connection, result.clone()));
     client_state.remove_connection(&connection);
 }
@@ -247,7 +244,6 @@ fn handle_handshake_timeout<Substate: ModelState>(
     uid: Uid,
     dispatcher: &mut Dispatcher,
 ) {
-    println!("handle_handshake_timeout {:?}", uid);
     let client_state = state.substate_mut::<PnetClientState>();
     let (&connection, Connection { on_result, .. }) =
         client_state.find_connection_by_nonce_request(&uid);
@@ -262,7 +258,6 @@ fn handle_connection_closed(
     connection: Uid,
     dispatcher: &mut Dispatcher,
 ) {
-    println!("handle_connection_closed {:?}", connection);
     let conn = client_state.get_connection(&connection);
 
     match conn.state {

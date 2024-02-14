@@ -30,7 +30,7 @@ pub enum MioEffectfulAction {
     },
     PollRegisterTcpServer {
         poll: Uid,         // created by PollCreate
-        tcp_listener: Uid, // created by TcpListen
+        listener: Uid, // created by TcpListen
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
     PollRegisterTcpConnection {
@@ -56,13 +56,13 @@ pub enum MioEffectfulAction {
         on_result: Redispatch<Uid>,
     },
     TcpListen {
-        tcp_listener: Uid,
+        listener: Uid,
         address: String,
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
     TcpAccept {
         connection: Uid,
-        tcp_listener: Uid, // created by TcpListen
+        listener: Uid, // created by TcpListen
         on_result: Redispatch<(Uid, TcpAcceptResult)>,
     },
     TcpConnect {

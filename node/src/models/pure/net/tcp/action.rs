@@ -3,7 +3,7 @@ use crate::{
         action::{self, Action, ActionKind, OrError, Redispatch, Timeout},
         state::Uid,
     },
-    models::effectful::mio::action::{PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult},
+    models::effectful::mio::action::MioEvent,
 };
 use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -16,11 +16,14 @@ pub enum TcpAction {
         instance: Uid,
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
-    PollCreateResult {
+    PollCreateSuccess {
         poll: Uid,
-        result: OrError<()>,
     },
-    EventsCreateResult {
+    PollCreateError {
+        poll: Uid,
+        error: String,
+    },
+    EventsCreate {
         uid: Uid,
     },
     Listen {
@@ -28,22 +31,34 @@ pub enum TcpAction {
         address: String,
         on_result: Redispatch<(Uid, OrError<()>)>,
     },
-    ListenResult {
-        tcp_listener: Uid,
-        result: OrError<()>,
+    ListenSuccess {
+        listener: Uid,
     },
-    RegisterListenerResult {
-        tcp_listener: Uid,
-        result: OrError<()>,
+    ListenError {
+        listener: Uid,
+        error: String,
+    },
+    RegisterListenerSuccess {
+        listener: Uid,
+    },
+    RegisterListenerError {
+        listener: Uid,
+        error: String,
     },
     Accept {
         connection: Uid,
-        tcp_listener: Uid,
+        listener: Uid,
         on_result: Redispatch<(Uid, ConnectionResult)>,
     },
-    AcceptResult {
+    AcceptSuccess {
         connection: Uid,
-        result: TcpAcceptResult,
+    },
+    AcceptTryAgain {
+        connection: Uid,
+    },
+    AcceptError {
+        connection: Uid,
+        error: String,
     },
     Connect {
         connection: Uid,
@@ -51,21 +66,34 @@ pub enum TcpAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, ConnectionResult)>,
     },
-    ConnectResult {
+    ConnectSuccess {
         connection: Uid,
-        result: OrError<()>,
     },
-    PeerAddressResult {
+    ConnectError {
         connection: Uid,
-        result: OrError<String>,
+        error: String,
     },
-    RegisterConnectionResult {
+    GetPeerAddressSuccess {
         connection: Uid,
-        result: OrError<()>,
+        address: String,
     },
-    DeregisterConnectionResult {
+    GetPeerAddressError {
         connection: Uid,
-        result: OrError<()>,
+        error: String,
+    },
+    RegisterConnectionSuccess {
+        connection: Uid,
+    },
+    RegisterConnectionError {
+        connection: Uid,
+        error: String,
+    },
+    DeregisterConnectionSuccess {
+        connection: Uid,
+    },
+    DeregisterConnectionError {
+        connection: Uid,
+        error: String,
     },
     Close {
         connection: Uid,
@@ -80,9 +108,16 @@ pub enum TcpAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, TcpPollResult)>,
     },
-    PollResult {
+    PollSuccess {
         uid: Uid,
-        result: PollResult,
+        events: Vec<MioEvent>,
+    },
+    PollInterrupted {
+        uid: Uid,
+    },
+    PollError {
+        uid: Uid,
+        error: String,
     },
     Send {
         uid: Uid,
@@ -95,9 +130,22 @@ pub enum TcpAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, SendResult)>,
     },
-    SendResult {
+    SendSuccess {
         uid: Uid,
-        result: TcpWriteResult,
+    },
+    SendSuccessPartial {
+        uid: Uid,
+        written: usize,
+    },
+    SendErrorInterrupted {
+        uid: Uid,
+    },
+    SendErrorTryAgain {
+        uid: Uid,
+    },
+    SendError {
+        uid: Uid,
+        error: String,
     },
     Recv {
         uid: Uid,
@@ -106,9 +154,23 @@ pub enum TcpAction {
         timeout: Timeout,
         on_result: Redispatch<(Uid, RecvResult)>,
     },
-    RecvResult {
+    RecvSuccess {
         uid: Uid,
-        result: TcpReadResult,
+        data: Vec<u8>,
+    },
+    RecvSuccessPartial {
+        uid: Uid,
+        data: Vec<u8>,
+    },
+    RecvErrorInterrupted {
+        uid: Uid,
+    },
+    RecvErrorTryAgain {
+        uid: Uid,
+    },
+    RecvError {
+        uid: Uid,
+        error: String,
     },
 }
 
