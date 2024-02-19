@@ -5,10 +5,11 @@ use crate::{
         state::ModelState,
     },
     models::pure::{
-        net::pnet::{client::state::PnetClientState, server::state::PnetServerState},
         net::{
             pnet::{
-                client::state::PnetClientConfig, common::PnetKey, server::state::PnetServerConfig,
+                client::state::{PnetClientConfig, PnetClientState},
+                common::PnetKey,
+                server::state::{PnetServerConfig, PnetServerState},
             },
             tcp::state::TcpState,
             tcp_client::state::TcpClientState,
@@ -16,14 +17,7 @@ use crate::{
         },
         prng::state::{PRNGConfig, PRNGState},
         tests::{
-            echo_client_pnet::{
-                action::PnetEchoClientAction,
-                state::{EchoClientConfig, PnetEchoClientState},
-            },
-            echo_server_pnet::{
-                action::PnetEchoServerAction,
-                state::{EchoServerConfig, PnetEchoServerState},
-            },
+            echo_client::state::EchoClientConfig, echo_client_pnet::{action::PnetEchoClientAction, state::PnetEchoClientState}, echo_server::state::EchoServerConfig, echo_server_pnet::{action::PnetEchoServerAction, state::PnetEchoServerState}
         },
         time::state::TimeState,
     },

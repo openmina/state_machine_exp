@@ -1,20 +1,19 @@
-use super::{
-    action::PnetEchoClientAction,
-    state::{EchoClientConfig, PnetEchoClientState, SendRequest},
-};
+use super::{action::PnetEchoClientAction, state::PnetEchoClientState};
 use crate::{
     automaton::{
-        action::{Dispatcher, OrError, Timeout},
+        action::{Dispatcher, Timeout},
         model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::{
-        net::pnet::client::{action::PnetClientAction, state::PnetClientState},
-        net::tcp::action::{ConnectResult, Event, RecvResult, SendResult, TcpAction},
+        net::{
+            pnet::client::{action::PnetClientAction, state::PnetClientState},
+            tcp::action::{TcpAction, TcpPollEvents},
+        },
         prng::state::PRNGState,
-        tests::echo_client_pnet::state::RecvRequest,
+        tests::echo_client::state::{EchoClientConfig, EchoClientStatus},
         time::model::update_time,
     },
 };
@@ -43,169 +42,333 @@ impl PureModel for PnetEchoClientState {
             PnetEchoClientAction::Tick => {
                 // Top-most model first task is to update the state-machine time.
                 if update_time(state, dispatcher) {
-                    // The next `EchoClientPureAction::Tick` will have the updated time.
+                    // The next `EchoClientAction::Tick` will have the updated time.
                     return;
                 }
 
-                let PnetEchoClientState { ready, config, .. } = state.substate_mut();
+                let PnetEchoClientState {
+                    status,
+                    config: EchoClientConfig { poll_timeout, .. },
+                    ..
+                } = state.substate_mut();
 
-                if !*ready {
-                    // Init TCP model
-                    dispatcher.dispatch(TcpAction::Init {
-                        instance: state.new_uid(),
-                        on_result: callback!(|(instance: Uid, result: OrError<()>)| {
-                            PnetEchoClientAction::InitResult { instance, result }
-                        }),
-                    })
-                } else {
-                    let timeout = Timeout::Millis(config.poll_timeout);
-                    // If the client is already initialized then we poll on each "tick".
-                    dispatcher.dispatch(PnetClientAction::Poll {
-                        uid: state.new_uid(),
-                        timeout,
-                        on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                            PnetEchoClientAction::PollResult { uid, result }
-                        }),
-                    })
+                match status {
+                    EchoClientStatus::Init => {
+                        // Init TCP model
+                        dispatcher.dispatch(TcpAction::Init {
+                            instance: state.new_uid(),
+                            on_success: callback!(|instance: Uid| PnetEchoClientAction::InitSuccess { instance }),
+                            on_error: callback!(|(instance: Uid, error: String)| PnetEchoClientAction::InitError { instance, error }),
+                        })
+                    }
+                    EchoClientStatus::Connecting
+                    | EchoClientStatus::Connected { .. }
+                    | EchoClientStatus::Sending { .. }
+                    | EchoClientStatus::Receiving { .. } => {
+                        let timeout = Timeout::Millis(*poll_timeout);
+                        // If the client is already initialized then we poll on each "tick".
+                        dispatcher.dispatch(PnetClientAction::Poll {
+                            uid: state.new_uid(),
+                            timeout,
+                            on_success: callback!(|(uid: Uid, events: TcpPollEvents)| PnetEchoClientAction::PollSuccess { uid, events }),
+                            on_error: callback!(|(uid: Uid, error: String)| PnetEchoClientAction::PollError { uid, error }),
+                        })
+                    }
                 }
             }
-            PnetEchoClientAction::InitResult { result, .. } => match result {
-                Ok(_) => {
-                    let connection = state.new_uid();
-                    let client_state: &mut PnetEchoClientState = state.substate_mut();
-
-                    client_state.ready = true;
-                    connect(client_state, dispatcher, connection);
-                }
-                Err(error) => panic!("Client initialization failed: {}", error),
-            },
-            PnetEchoClientAction::ConnectResult { connection, result } => match result {
-                ConnectResult::Success => {
-                    let client_state: &mut PnetEchoClientState = state.substate_mut();
-
-                    client_state.connection_attempt = 0;
-                    client_state.connection = Some(connection);
-                }
-                ConnectResult::Timeout => {
-                    let new_connection_uid = state.new_uid();
-
-                    reconnect(
-                        state.substate_mut(),
-                        dispatcher,
-                        connection,
-                        new_connection_uid,
-                        "timeout".to_string(),
-                    )
-                }
-                ConnectResult::Error(error) => {
-                    let new_connection_uid = state.new_uid();
-
-                    reconnect(
-                        state.substate_mut(),
-                        dispatcher,
-                        connection,
-                        new_connection_uid,
-                        error,
-                    )
-                }
-            },
-            PnetEchoClientAction::CloseEvent { connection } => {
-                info!("|ECHO_CLIENT| connection {:?} closed", connection);
-
+            PnetEchoClientAction::InitSuccess { .. } => {
                 let connection = state.new_uid();
                 let client_state: &mut PnetEchoClientState = state.substate_mut();
 
-                client_state.connection = None;
-                connect(client_state, dispatcher, connection);
+                client_state.status = EchoClientStatus::Connecting;
+                connect(client_state, connection, dispatcher);
             }
-            PnetEchoClientAction::PollResult { uid, result, .. } => match result {
-                Ok(_) => {
-                    // Send random data on every poll if there are no pending send/recv requests.
-                    if let PnetEchoClientState {
-                        connection: Some(connection),
-                        send_request: None,
-                        recv_request: None,
-                        config: EchoClientConfig { max_send_size, .. },
-                        ..
-                    } = state.substate()
-                    {
-                        send_random_data_to_server(state, dispatcher, *connection, *max_send_size)
-                    }
+            PnetEchoClientAction::InitError { error, .. } => {
+                panic!("Client initialization failed: {}", error)
+            }
+            PnetEchoClientAction::ConnectSuccess { connection } => {
+                let PnetEchoClientState {
+                    status,
+                    connection_attempt,
+                    ..
+                } = state.substate_mut();
+
+                if let EchoClientStatus::Connecting = status {
+                    *status = EchoClientStatus::Connected { connection };
+                    *connection_attempt = 0;
+                } else {
+                    unreachable!()
                 }
-                Err(error) => panic!("Poll {:?} failed: {}", uid, error),
-            },
-            PnetEchoClientAction::SendResult { uid, result } => {
-                let client_state: &mut PnetEchoClientState = state.substate_mut();
-                let connection = client_state
-                    .connection
-                    .expect("client not connected during SendResult action");
-                let request = client_state
-                    .send_request
-                    .take()
-                    .expect("no SendRequest for this SendResult");
-
-                assert_eq!(request.uid, uid);
-
-                match result {
-                    // if random data was sent successfully, we wait for the server's response
-                    SendResult::Success => recv_from_server_with_random_timeout(
-                        state,
-                        dispatcher,
-                        connection,
-                        request.data,
-                    ),
-                    SendResult::Timeout => {
-                        dispatcher.dispatch(PnetClientAction::Close { connection });
-                        warn!("|ECHO_CLIENT| send {:?} timeout", uid)
-                    }
-                    SendResult::Error(error) => {
-                        warn!("|ECHO_CLIENT| send {:?} error: {:?}", uid, error)
-                    }
-                };
             }
-            PnetEchoClientAction::RecvResult { uid, result } => {
+            PnetEchoClientAction::ConnectTimeout { connection } => {
+                let new_connection_uid = state.new_uid();
+                let PnetEchoClientState {
+                    status,
+                    connection_attempt,
+                    config:
+                        EchoClientConfig {
+                            max_connection_attempts,
+                            ..
+                        },
+                    ..
+                } = state.substate_mut();
+
+                if let EchoClientStatus::Connecting = status {
+                    *connection_attempt += 1;
+
+                    warn!(
+                        "|PNET_ECHO_CLIENT| connection {:?} timeout, reconnection attempt {}",
+                        connection, connection_attempt
+                    );
+
+                    assert!(connection_attempt < max_connection_attempts);
+                    connect(state.substate_mut(), new_connection_uid, dispatcher);
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::ConnectError { connection, error } => {
+                let new_connection_uid = state.new_uid();
+                let PnetEchoClientState {
+                    status,
+                    connection_attempt,
+                    config:
+                        EchoClientConfig {
+                            max_connection_attempts,
+                            ..
+                        },
+                    ..
+                } = state.substate_mut();
+
+                if let EchoClientStatus::Connecting = status {
+                    *connection_attempt += 1;
+
+                    warn!(
+                        "|PNET_ECHO_CLIENT| connection {:?} error: {}, reconnection attempt {}",
+                        connection, error, connection_attempt
+                    );
+
+                    assert!(connection_attempt < max_connection_attempts);
+                    connect(state.substate_mut(), new_connection_uid, dispatcher);
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::CloseEvent { connection } => {
+                info!("|PNET_ECHO_CLIENT| connection {:?} closed", connection);
+
+                let new_connection_uid = state.new_uid();
                 let client_state: &mut PnetEchoClientState = state.substate_mut();
-                let connection = client_state
-                    .connection
-                    .expect("client not connected during RecvResult action");
-                let request = client_state
-                    .recv_request
-                    .take()
-                    .expect("no RecvRequest for this RecvResult");
 
-                assert_eq!(request.uid, uid);
+                client_state.status = EchoClientStatus::Connecting;
+                connect(client_state, new_connection_uid, dispatcher);
+            }
+            PnetEchoClientAction::PollSuccess { .. } => {
+                // Send random data on every poll if there are no pending send/recv requests.
+                if let PnetEchoClientState {
+                    status: EchoClientStatus::Connected { connection },
+                    config: EchoClientConfig { max_send_size, .. },
+                    ..
+                } = state.substate()
+                {
+                    let connection = *connection;
+                    let max_send_size = *max_send_size;
+                    let request = state.new_uid();
+                    let prng: &mut PRNGState = state.substate_mut();
+                    let random_size = prng.rng.gen_range(1..max_send_size) as usize;
+                    let mut data: Vec<u8> = vec![0; random_size];
 
-                match result {
-                    RecvResult::Success(data_received) => {
-                        let data_sent = request.data.as_ref();
+                    prng.rng.fill_bytes(&mut data[..]);
 
-                        if data_sent != data_received {
-                            panic!(
-                                "Data mismatch:\nsent({:?})\nreceived({:?})",
-                                data_sent, data_received
-                            )
-                        }
-                        info!("|ECHO_CLIENT| recv {:?} data matches what was sent", uid);
+                    state.substate_mut::<PnetEchoClientState>().status =
+                        EchoClientStatus::Sending {
+                            connection,
+                            request,
+                            data: data.clone(),
+                        };
+
+                    dispatcher.dispatch(PnetClientAction::Send {
+                        uid: request,
+                        connection,
+                        data: data.into(),
+                        timeout: Timeout::Millis(200),
+                        on_success: callback!(|uid: Uid| PnetEchoClientAction::SendSuccess { uid }),
+                        on_timeout: callback!(|uid: Uid| PnetEchoClientAction::SendTimeout { uid }),
+                        on_error: callback!(|(uid: Uid, error: String)| PnetEchoClientAction::SendError { uid, error })
+                    });
+                }
+            }
+            PnetEchoClientAction::PollError { uid, error } => {
+                panic!("Poll {:?} failed: {}", uid, error)
+            }
+            PnetEchoClientAction::SendSuccess { uid } => {
+                // Receive back what we sent
+                if let PnetEchoClientState {
+                    status:
+                        EchoClientStatus::Sending {
+                            connection,
+                            request,
+                            data,
+                        },
+                    config:
+                        EchoClientConfig {
+                            min_rnd_timeout,
+                            max_rnd_timeout,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+                    let sent_data = data.clone();
+                    let count = sent_data.len();
+
+                    // We randomize client's recv timeout to force it fail sometimes
+                    let timeout_range = *min_rnd_timeout..*max_rnd_timeout;
+                    let prng: &mut PRNGState = state.substate_mut();
+                    let timeout = Timeout::Millis(prng.rng.gen_range(timeout_range));
+                    let request = state.new_uid();
+
+                    info!(
+                        "|PNET_ECHO_CLIENT| dispatching recv request {:?} ({} bytes) from connection {:?} with timeout {:?}",
+                        request, count, connection, timeout
+                    );
+
+                    state.substate_mut::<PnetEchoClientState>().status =
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            sent_data,
+                        };
+
+                    dispatcher.dispatch(PnetClientAction::Recv {
+                        uid: request,
+                        connection,
+                        count,
+                        timeout,
+                        on_success: callback!(|(uid: Uid, data: Vec<u8>)| PnetEchoClientAction::RecvSuccess { uid, data }),
+                        on_timeout: callback!(|(uid: Uid, partial_data: Vec<u8>)| PnetEchoClientAction::RecvTimeout { uid, partial_data }),
+                        on_error: callback!(|(uid: Uid, error: String)| PnetEchoClientAction::RecvError { uid, error }),
+                    });
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::SendTimeout { uid } => {
+                if let PnetEchoClientState {
+                    status: EchoClientStatus::Sending { connection, .. },
+                    ..
+                } = state.substate()
+                {
+                    let connection = *connection;
+                    warn!(
+                        "|PNET_ECHO_CLIENT| send {:?} timeout to connection {:?}",
+                        uid, connection
+                    );
+                    dispatcher.dispatch(PnetClientAction::Close { connection })
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::SendError { uid, error } => {
+                if let PnetEchoClientState {
+                    status: EchoClientStatus::Sending { connection, .. },
+                    ..
+                } = state.substate()
+                {
+                    warn!(
+                        "|PNET_ECHO_CLIENT| send {:?} to connection {:?} error: {}",
+                        uid, connection, error
+                    );
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::RecvSuccess { uid, data } => {
+                if let PnetEchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            sent_data,
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    if *sent_data != data {
+                        panic!("Data mismatch: {:?} != {:?}", sent_data, data)
                     }
-                    RecvResult::Timeout(_) => {
-                        dispatcher.dispatch(PnetClientAction::Close { connection });
-                        warn!("|ECHO_CLIENT| recv {:?} timeout", uid)
-                    }
-                    RecvResult::Error(error) => {
-                        warn!("|ECHO_CLIENT| recv {:?} error: {:?}", uid, error)
-                    }
+
+                    state.substate_mut::<PnetEchoClientState>().status =
+                        EchoClientStatus::Connected { connection };
+
+                    info!(
+                        "|PNET_ECHO_CLIENT| recv {:?} from connection {:?}, data matches.",
+                        uid, connection
+                    );
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::RecvTimeout { uid, .. } => {
+                if let PnetEchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    warn!(
+                        "|PNET_ECHO_CLIENT| recv {:?} timeout from connection {:?}",
+                        uid, connection
+                    );
+                    dispatcher.dispatch(PnetClientAction::Close { connection })
+                } else {
+                    unreachable!()
+                }
+            }
+            PnetEchoClientAction::RecvError { uid, error } => {
+                if let PnetEchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    warn!(
+                        "|PNET_ECHO_CLIENT| recv {:?} from connection {:?} error: {}",
+                        uid, connection, error
+                    );
+                } else {
+                    unreachable!()
                 }
             }
         }
     }
 }
 
-fn connect(client_state: &PnetEchoClientState, dispatcher: &mut Dispatcher, connection: Uid) {
+fn connect(client_state: &PnetEchoClientState, connection: Uid, dispatcher: &mut Dispatcher) {
     let PnetEchoClientState {
         config:
             EchoClientConfig {
                 connect_to_address,
-                connect_timeout: timeout,
+                connect_timeout,
                 ..
             },
         ..
@@ -214,110 +377,10 @@ fn connect(client_state: &PnetEchoClientState, dispatcher: &mut Dispatcher, conn
     dispatcher.dispatch(PnetClientAction::Connect {
         connection,
         address: connect_to_address.clone(),
-        timeout: timeout.clone(),
-        on_close_connection: callback!(|connection: Uid| {
-            PnetEchoClientAction::CloseEvent { connection }
-        }),
-        on_result: callback!(|(connection: Uid, result: ConnectResult)| {
-            PnetEchoClientAction::ConnectResult {
-                connection,
-                result
-            }
-        }),
+        timeout: connect_timeout.clone(),
+        on_success: callback!(|connection: Uid| PnetEchoClientAction::ConnectSuccess { connection }),
+        on_timeout: callback!(|connection: Uid| PnetEchoClientAction::ConnectTimeout { connection }),
+        on_error: callback!(|(connection: Uid, error: String)| PnetEchoClientAction::ConnectError { connection, error }),
+        on_close: callback!(|connection: Uid| PnetEchoClientAction::CloseEvent { connection })
     });
-}
-
-fn reconnect(
-    client_state: &mut PnetEchoClientState,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    new_connection_uid: Uid,
-    error: String,
-) {
-    client_state.connection_attempt += 1;
-
-    warn!(
-        "|ECHO_CLIENT| connection {:?} error: {}, reconnection attempt {}",
-        connection, error, client_state.connection_attempt
-    );
-
-    if client_state.connection_attempt == client_state.config.max_connection_attempts {
-        panic!(
-            "Max reconnection attempts: {}",
-            client_state.config.max_connection_attempts
-        )
-    }
-
-    connect(client_state, dispatcher, new_connection_uid);
-}
-
-fn send_random_data_to_server<Substate: ModelState>(
-    state: &mut State<Substate>,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    max_send_size: u64,
-) {
-    let prng_state: &mut PRNGState = state.substate_mut();
-    let rnd_len = prng_state.rng.gen_range(1..max_send_size) as usize;
-    let mut random_data: Vec<u8> = vec![0; rnd_len];
-
-    prng_state.rng.fill_bytes(&mut random_data[..]);
-
-    let request = SendRequest {
-        uid: state.new_uid(),
-        data: random_data.into(),
-    };
-
-    dispatcher.dispatch(PnetClientAction::Send {
-        uid: request.uid.clone(),
-        connection,
-        data: request.data.clone(),
-        timeout: Timeout::Millis(200),
-        on_result: callback!(|(uid: Uid, result: SendResult)| {
-            PnetEchoClientAction::SendResult { uid, result }
-        }),
-    });
-
-    state.substate_mut::<PnetEchoClientState>().send_request = Some(request);
-}
-
-fn recv_from_server_with_random_timeout<Substate: ModelState>(
-    state: &mut State<Substate>,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    data: Vec<u8>,
-) {
-    let uid = state.new_uid();
-    let PnetEchoClientState {
-        config:
-            EchoClientConfig {
-                min_rnd_timeout,
-                max_rnd_timeout,
-                ..
-            },
-        ..
-    } = state.substate();
-
-    // We randomize client's recv timeout to force it fail sometimes
-    let timeout_range = *min_rnd_timeout..*max_rnd_timeout;
-    let prng_state: &mut PRNGState = state.substate_mut();
-    let timeout = Timeout::Millis(prng_state.rng.gen_range(timeout_range));
-    let count = data.len();
-
-    info!(
-        "|ECHO_CLIENT| dispatching recv request {:?} ({} bytes) from connection {:?} with timeout {:?}",
-        uid, count, connection, timeout
-    );
-
-    dispatcher.dispatch(PnetClientAction::Recv {
-        uid,
-        connection,
-        count,
-        timeout,
-        on_result: callback!(|(uid: Uid, result: RecvResult)| {
-            PnetEchoClientAction::RecvResult { uid, result }
-        }),
-    });
-
-    state.substate_mut::<PnetEchoClientState>().recv_request = Some(RecvRequest { uid, data });
 }

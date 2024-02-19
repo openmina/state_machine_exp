@@ -1,25 +1,21 @@
 use super::{
     action::TcpServerAction,
-    state::{PollRequest, RecvRequest, SendRequest, Server, TcpServerState},
+    state::{Listener, PollRequest, RecvRequest, SendRequest, TcpServerState},
 };
 use crate::{
     automaton::{
-        action::{Dispatcher, OrError},
+        action::Dispatcher,
         model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::net::tcp::{
-        action::{
-            AcceptResult, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult,
-            TcpAction, TcpPollResult,
-        },
+        action::{Event, ListenerEvent, TcpAction, TcpPollEvents},
         state::TcpState,
     },
 };
 use log::warn;
-use std::collections::BTreeSet;
 
 // The `TcpServerState` model is an abstraction layer over the `TcpState` model
 // providing a simpler interface for working with TCP server operations.
@@ -42,273 +38,296 @@ impl PureModel for TcpServerState {
         match action {
             TcpServerAction::New {
                 address,
-                server,
+                listener,
                 max_connections,
+                on_success,
+                on_error,
                 on_new_connection,
-                on_close_connection,
-                on_result,
+                on_connection_closed,
+                on_listener_closed,
             } => {
-                state.substate_mut::<TcpServerState>().new_server(
-                    server,
+                state.substate_mut::<TcpServerState>().new_listener(
+                    listener,
                     max_connections,
+                    on_success,
+                    on_error,
                     on_new_connection,
-                    on_close_connection,
-                    on_result,
+                    on_connection_closed,
+                    on_listener_closed,
                 );
 
                 dispatcher.dispatch(TcpAction::Listen {
-                    tcp_listener: server,
+                    listener,
                     address,
-                    on_result: callback!(|(server: Uid, result: OrError<()>)| {
-                        TcpServerAction::NewResult { server, result }
-                    }),
+                    on_success: callback!(|listener: Uid| TcpServerAction::NewSuccess { listener }),
+                    on_error: callback!(|(listener: Uid, error: String)| TcpServerAction::NewError { listener, error })
                 });
             }
-            TcpServerAction::NewResult { server, result } => {
+            TcpServerAction::NewSuccess { listener } => {
+                let Listener { on_success, .. } =
+                    state.substate::<TcpServerState>().get_listener(&listener);
+
+                dispatcher.dispatch_back(on_success, listener);
+            }
+            TcpServerAction::NewError { listener, error } => {
                 let server_state: &mut TcpServerState = state.substate_mut();
-                let Server { on_result, .. } = server_state.get_server(&server);
+                let Listener { on_error, .. } = server_state.get_listener(&listener);
 
-                dispatcher.dispatch_back(on_result, (server, result.clone()));
-
-                if result.is_err() {
-                    server_state.remove_server(&server)
-                }
+                dispatcher.dispatch_back(on_error, (listener, error));
+                server_state.remove_listener(&listener);
             }
             TcpServerAction::Poll {
                 uid,
                 timeout,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let server_state: &mut TcpServerState = state.substate_mut();
-                let objects = server_state.server_objects.keys().cloned().collect();
+                let objects = server_state.listeners.keys().cloned().collect();
 
-                server_state.set_poll_request(PollRequest { on_result });
+                server_state.set_poll_request(PollRequest {
+                    on_success,
+                    on_error,
+                });
                 dispatcher.dispatch(TcpAction::Poll {
                     uid,
                     objects,
                     timeout,
-                    on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                        TcpServerAction::PollResult { uid, result }
-                    }),
+                    on_success: callback!(|(uid: Uid, events: TcpPollEvents)| TcpServerAction::PollSuccess { uid, events } ),
+                    on_error: callback!(|(uid: Uid, error: String)| TcpServerAction::PollError { uid, error } ),
                 })
             }
-            TcpServerAction::PollResult { uid, result } => {
-                let accept_pending: Vec<_> =
-                    handle_poll_result(state.substate_mut(), dispatcher, uid, result)
-                        .iter()
-                        .map(|listener| (*listener, state.new_uid()))
-                        .collect();
+            TcpServerAction::PollSuccess { uid, events } => {
+                let PollRequest { on_success, .. } =
+                    state.substate_mut::<TcpServerState>().take_poll_request();
 
-                for (tcp_listener, connection) in accept_pending {
-                    state
-                        .substate_mut::<TcpServerState>()
-                        .new_connection(connection, tcp_listener);
+                process_poll_events(state, dispatcher, events);
+                dispatcher.dispatch_back(&on_success, uid)
+            }
+            TcpServerAction::PollError { uid, error } => {
+                let PollRequest { on_error, .. } =
+                    state.substate_mut::<TcpServerState>().take_poll_request();
 
-                    dispatcher.dispatch(TcpAction::Accept {
+                dispatcher.dispatch_back(&on_error, (uid, error))
+            }
+            TcpServerAction::AcceptSuccess { connection } => {
+                let (
+                    listener,
+                    Listener {
+                        max_connections,
+                        on_new_connection,
+                        connections,
+                        ..
+                    },
+                ) = state
+                    .substate_mut::<TcpServerState>()
+                    .get_connection_listener_mut(&connection);
+
+                // When we reach the max allowed connections we close it, without notifications.
+                // TODO: this could probably better handled at low-level by changing the TcpListener backlog.
+                // Currently, MIO sets a fixed value of 1024.
+                if connections.len() > *max_connections {
+                    dispatcher.dispatch(TcpAction::Close {
                         connection,
-                        listener: tcp_listener,
-                        on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
-                            TcpServerAction::AcceptResult { connection, result }
+                        on_success: callback!(|connection: Uid| {
+                            TcpServerAction::CloseEventInternal { connection }
                         }),
-                    });
+                    })
+                } else {
+                    // otherwise we notify the model user of the new connection.
+                    dispatcher.dispatch_back(on_new_connection, (*listener, connection))
                 }
             }
-            TcpServerAction::AcceptResult { connection, result } => {
-                let (server_uid, server) = state
+            TcpServerAction::AcceptTryAgain { connection } => {
+                // No new connections, ignore.
+                let (_, listener_object) = state
                     .substate_mut::<TcpServerState>()
-                    .get_connection_server_mut(&connection);
-                let ConnectionResult::Incoming(result) = result else {
-                    unreachable!()
-                };
+                    .get_connection_listener_mut(&connection);
 
-                match result {
-                    // when reach max allowed connections we close it without notifications
-                    // TODO: this could probably better handled at low-level by changing the
-                    // TcpListener backlog. Currently, MIO sets a fixed value of 1024.
-                    AcceptResult::Success if server.connections.len() > server.max_connections => {
-                        dispatcher.dispatch(TcpAction::Close {
-                            connection,
-                            on_result: callback!(|connection: Uid| {
-                                TcpServerAction::CloseResult {
-                                    connection,
-                                    notify: false,
-                                }
-                            }),
-                        })
-                    }
-                    // otherwise we notify the model user of the new connection.
-                    AcceptResult::Success => dispatcher
-                        .dispatch_back(&server.on_new_connection, (*server_uid, connection)),
-                    // No new connections, ignore.
-                    AcceptResult::WouldBlock => server.remove_connection(&connection),
-                    // Warn about accept errors, but no user notification.
-                    AcceptResult::Error(error) => {
-                        warn!(
-                            "|TCP_SERVER| accept connection {:?} failed: {:?}",
-                            connection, error
-                        );
-                        server.remove_connection(&connection);
-                    }
-                }
+                listener_object.remove_connection(&connection)
+            }
+            TcpServerAction::AcceptError { connection, error } => {
+                let (_, listener_object) = state
+                    .substate_mut::<TcpServerState>()
+                    .get_connection_listener_mut(&connection);
+
+                warn!("|TCP_SERVER| accept {:?} failed: {:?}", connection, error);
+                listener_object.remove_connection(&connection)
             }
             TcpServerAction::Close { connection } => dispatcher.dispatch(TcpAction::Close {
                 connection,
-                on_result: callback!(|connection: Uid| {
-                    TcpServerAction::CloseResult {
-                        connection,
-                        notify: true,
-                    }
+                on_success: callback!(|connection: Uid| TcpServerAction::CloseEventNotify {
+                    connection
                 }),
             }),
-            TcpServerAction::CloseResult { connection, notify } => {
-                let (&uid, server) = state
+            TcpServerAction::CloseEventInternal { connection } => {
+                let (_, listener_object) = state
                     .substate_mut::<TcpServerState>()
-                    .get_connection_server_mut(&connection);
+                    .get_connection_listener_mut(&connection);
 
-                if notify {
-                    dispatcher.dispatch_back(&server.on_close_connection, (uid, connection));
-                }
+                listener_object.remove_connection(&connection)
+            }
+            TcpServerAction::CloseEventNotify { connection } => {
+                let (listener, listener_object) = state
+                    .substate_mut::<TcpServerState>()
+                    .get_connection_listener_mut(&connection);
 
-                server.remove_connection(&connection);
+                dispatcher.dispatch_back(
+                    &listener_object.on_connection_closed,
+                    (*listener, connection),
+                );
+                listener_object.remove_connection(&connection)
             }
             TcpServerAction::Send {
                 uid,
                 connection,
                 data,
                 timeout,
-                on_result,
+                on_success,
+                on_timeout,
+                on_error,
             } => {
                 state
                     .substate_mut::<TcpServerState>()
-                    .new_send_request(&uid, connection, on_result);
+                    .new_send_request(&uid, connection, on_success, on_timeout, on_error);
 
                 dispatcher.dispatch(TcpAction::Send {
                     uid,
                     connection,
                     data,
                     timeout,
-                    on_result: callback!(|(uid: Uid, result: SendResult)| {
-                        TcpServerAction::SendResult { uid, result }
-                    }),
+                    on_success: callback!(|uid: Uid| TcpServerAction::SendSuccess { uid }),
+                    on_timeout: callback!(|uid: Uid| TcpServerAction::SendTimeout { uid }),
+                    on_error: callback!(|(uid: Uid, error: String)| TcpServerAction::SendError { uid, error }),
                 });
             }
-            TcpServerAction::SendResult { uid, result } => {
+            TcpServerAction::SendSuccess { uid } => {
+                let SendRequest { on_success, .. } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_send_request(&uid);
+
+                dispatcher.dispatch_back(&on_success, uid)
+            }
+            TcpServerAction::SendTimeout { uid } => {
+                let SendRequest { on_timeout, .. } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_send_request(&uid);
+
+                dispatcher.dispatch_back(&on_timeout, uid)
+            }
+            TcpServerAction::SendError { uid, error } => {
                 let SendRequest {
                     connection,
-                    on_result,
+                    on_error,
+                    ..
                 } = state
                     .substate_mut::<TcpServerState>()
                     .take_send_request(&uid);
 
-                if let SendResult::Error(_) = result {
-                    dispatcher.dispatch(TcpAction::Close {
-                        connection,
-                        on_result: callback!(|connection: Uid| {
-                            TcpServerAction::CloseResult {
-                                connection,
-                                notify: true,
-                            }
-                        }),
-                    });
-                }
-
-                dispatcher.dispatch_back(&on_result, (uid, result))
+                dispatcher.dispatch_back(&on_error, (uid, error));
+                // close the connection on send errors
+                dispatcher.dispatch(TcpAction::Close {
+                    connection,
+                    on_success: callback!(|connection: Uid| TcpServerAction::CloseEventNotify {
+                        connection
+                    }),
+                });
             }
             TcpServerAction::Recv {
                 uid,
                 connection,
                 count,
                 timeout,
-                on_result,
+                on_success,
+                on_timeout,
+                on_error,
             } => {
                 state
                     .substate_mut::<TcpServerState>()
-                    .new_recv_request(&uid, connection, on_result);
+                    .new_recv_request(&uid, connection, on_success, on_timeout, on_error);
 
                 dispatcher.dispatch(TcpAction::Recv {
                     uid,
                     connection,
                     count,
                     timeout,
-                    on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                        TcpServerAction::RecvResult { uid, result }
-                    }),
+                    on_success: callback!(|(uid: Uid, data: Vec<u8>)| TcpServerAction::RecvSuccess { uid, data }),
+                    on_timeout: callback!(|(uid: Uid, partial_data: Vec<u8>)| TcpServerAction::RecvTimeout { uid, partial_data }),
+                    on_error: callback!(|(uid: Uid, error: String)| TcpServerAction::RecvError { uid, error }),
                 });
             }
-            TcpServerAction::RecvResult { uid, result } => {
+            TcpServerAction::RecvSuccess { uid, data } => {
+                let RecvRequest { on_success, .. } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_recv_request(&uid);
+
+                dispatcher.dispatch_back(&on_success, (uid, data))
+            }
+            TcpServerAction::RecvTimeout { uid, partial_data } => {
+                let RecvRequest { on_timeout, .. } = state
+                    .substate_mut::<TcpServerState>()
+                    .take_recv_request(&uid);
+
+                dispatcher.dispatch_back(&on_timeout, (uid, partial_data))
+            }
+            TcpServerAction::RecvError { uid, error } => {
                 let RecvRequest {
                     connection,
-                    on_result,
+                    on_error,
+                    ..
                 } = state
                     .substate_mut::<TcpServerState>()
                     .take_recv_request(&uid);
 
-                if let RecvResult::Error(_) = result {
-                    dispatcher.dispatch(TcpAction::Close {
-                        connection,
-                        on_result: callback!(|connection: Uid| {
-                            TcpServerAction::CloseResult {
-                                connection,
-                                notify: true,
-                            }
-                        }),
-                    });
-                }
+                dispatcher.dispatch_back(&on_error, (uid, error));
 
-                dispatcher.dispatch_back(&on_result, (uid, result))
+                // close the connection on recv errors
+                dispatcher.dispatch(TcpAction::Close {
+                    connection,
+                    on_success: callback!(|connection: Uid| TcpServerAction::CloseEventNotify {
+                        connection
+                    }),
+                })
             }
         }
     }
 }
 
-fn handle_poll_result(
-    server_state: &mut TcpServerState,
+fn process_poll_events<Substate: ModelState>(
+    state: &mut State<Substate>,
     dispatcher: &mut Dispatcher,
-    uid: Uid,
-    result: TcpPollResult,
-) -> BTreeSet<Uid> {
-    let PollRequest { on_result, .. } = server_state.take_poll_request();
-    let mut accept_list = BTreeSet::new();
+    events: TcpPollEvents,
+) {
+    for (listener, ev) in events {
+        if let Event::Listener(event) = ev {
+            match event {
+                ListenerEvent::AcceptPending => {
+                    let connection = state.new_uid();
+                    state
+                        .substate_mut::<TcpServerState>()
+                        .new_connection(connection, listener);
 
-    match result {
-        Ok(events) => {
-            let mut removed_list = BTreeSet::new();
+                    dispatcher.dispatch(TcpAction::Accept {
+                        connection,
+                        listener,
+                        on_success: callback!(|connection: Uid| TcpServerAction::AcceptSuccess { connection }),
+                        on_would_block: callback!(|connection: Uid| TcpServerAction::AcceptTryAgain { connection }),
+                        on_error: callback!(|(connection: Uid, error: String)| TcpServerAction::AcceptError { connection, error }),
+                    });
+                }
+                ListenerEvent::AllAccepted => (),
+                ListenerEvent::Closed | ListenerEvent::Error => {
+                    let Listener {
+                        on_listener_closed, ..
+                    } = state
+                        .substate_mut::<TcpServerState>()
+                        .remove_listener(&listener);
 
-            for (server, event) in events {
-                let Event::Listener(listener_event) = event else {
-                    panic!("Unrequested event type {:?} for {:?}", event, server)
-                };
-
-                match listener_event {
-                    ListenerEvent::AcceptPending => {
-                        accept_list.insert(server);
-                    }
-                    ListenerEvent::AllAccepted => (),
-                    ListenerEvent::Closed | ListenerEvent::Error => {
-                        removed_list.insert(server);
-                    }
+                    dispatcher.dispatch_back(&on_listener_closed, listener)
                 }
             }
-
-            let result = if !removed_list.is_empty() {
-                removed_list
-                    .iter()
-                    .for_each(|uid| server_state.remove_server(uid));
-
-                accept_list.clear();
-
-                Err(format!(
-                    "Server(s) (Uid(s): {:?}) in closed or invalid state",
-                    removed_list
-                ))
-            } else {
-                Ok(())
-            };
-
-            dispatcher.dispatch_back(&on_result, (uid, result));
+        } else {
+            unreachable!()
         }
-        Err(err) => dispatcher.dispatch_back(&on_result, (uid, Err::<(), String>(err))),
     }
-
-    accept_list
 }

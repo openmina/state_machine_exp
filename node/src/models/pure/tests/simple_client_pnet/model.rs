@@ -62,7 +62,7 @@ impl PureModel for SimpleClientState {
                     dispatcher.dispatch(PnetClientAction::Poll {
                         uid: state.new_uid(),
                         timeout,
-                        on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
+                        on_result: callback!(|(uid: Uid, result: OrError<TcpPollEvents>)| {
                             SimpleClientAction::PollResult { uid, result }
                         }),
                     })

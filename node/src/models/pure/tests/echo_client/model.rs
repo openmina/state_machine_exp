@@ -1,26 +1,28 @@
-use super::{action::EchoClientAction, state::EchoClientState};
+use super::{
+    action::EchoClientAction,
+    state::{EchoClientState, EchoClientStatus},
+};
 use crate::{
     automaton::{
-        action::{Dispatcher, OrError, Timeout},
+        action::{Dispatcher, Timeout},
         model::PureModel,
         runner::{RegisterModel, RunnerBuilder},
         state::{ModelState, State, Uid},
     },
     callback,
     models::pure::{
-        net::tcp::action::{
-            ConnectResult, ConnectionResult, Event, RecvResult, SendResult, TcpAction,
+        net::{
+            tcp::action::{TcpAction, TcpPollEvents},
+            tcp_client::{action::TcpClientAction, state::TcpClientState},
         },
-        net::tcp_client::{action::TcpClientAction, state::TcpClientState},
         prng::state::PRNGState,
-        tests::echo_client::state::{EchoClientConfig, RecvRequest, SendRequest},
+        tests::echo_client::state::EchoClientConfig,
         time::model::update_time,
     },
 };
 use core::panic;
 use log::{info, warn};
 use rand::{Rng, RngCore};
-use std::rc::Rc;
 
 // The `EchoClientState` acts as a simulated echo client, used for testing the
 // functionality of the state-machine and its related models (`TcpClientState`,
@@ -46,15 +48,12 @@ use std::rc::Rc;
 //   If this limit is exceeded, the client panics.
 //
 // - For each poll result the client sends random data to the echo server.
-//   The function `send_random_data_to_server` is used for this purpose. The
-//   size and content of this data are randomly generated using the `PRNGState`
-//   model.
+//   The size and content of this data are randomly generated using the
+//   `PRNGState` model.
 //
 // - After sending data, the client dispatches a receive action to read the
-//   server's response. The function `recv_from_server_with_random_timeout` is
-//   used to receive data from the server. This function uses a random timeout
-//   (generated using the `PRNGState` model) to simulate different network
-//   conditions.
+//   server's response. A random timeout is generated using the `PRNGState`
+//   model to simulate different network conditions.
 //
 // - When it receives data from the server, the client checks if the received
 //   data matches the sent data. If not, the client panics.
@@ -86,171 +85,328 @@ impl PureModel for EchoClientState {
                     return;
                 }
 
-                let EchoClientState { ready, config, .. } = state.substate_mut();
+                let EchoClientState {
+                    status,
+                    config: EchoClientConfig { poll_timeout, .. },
+                    ..
+                } = state.substate_mut();
 
-                if !*ready {
-                    // Init TCP model
-                    dispatcher.dispatch(TcpAction::Init {
-                        instance: state.new_uid(),
-                        on_result: callback!(|(instance: Uid, result: OrError<()>)| {
-                            EchoClientAction::InitResult { instance, result }
-                        }),
-                    })
-                } else {
-                    let timeout = Timeout::Millis(config.poll_timeout);
-                    // If the client is already initialized then we poll on each "tick".
-                    dispatcher.dispatch(TcpClientAction::Poll {
-                        uid: state.new_uid(),
-                        timeout,
-                        on_result: callback!(|(uid: Uid, result: OrError<Vec<(Uid, Event)>>)| {
-                            EchoClientAction::PollResult { uid, result }
-                        }),
-                    })
+                match status {
+                    EchoClientStatus::Init => {
+                        // Init TCP model
+                        dispatcher.dispatch(TcpAction::Init {
+                            instance: state.new_uid(),
+                            on_success: callback!(|instance: Uid| EchoClientAction::InitSuccess { instance }),
+                            on_error: callback!(|(instance: Uid, error: String)| EchoClientAction::InitError { instance, error }),
+                        })
+                    }
+                    EchoClientStatus::Connecting
+                    | EchoClientStatus::Connected { .. }
+                    | EchoClientStatus::Sending { .. }
+                    | EchoClientStatus::Receiving { .. } => {
+                        let timeout = Timeout::Millis(*poll_timeout);
+                        // If the client is already initialized then we poll on each "tick".
+                        dispatcher.dispatch(TcpClientAction::Poll {
+                            uid: state.new_uid(),
+                            timeout,
+                            on_success: callback!(|(uid: Uid, events: TcpPollEvents)| EchoClientAction::PollSuccess { uid, events }),
+                            on_error: callback!(|(uid: Uid, error: String)| EchoClientAction::PollError { uid, error }),
+                        })
+                    }
                 }
             }
-            EchoClientAction::InitResult { result, .. } => match result {
-                Ok(_) => {
-                    let connection = state.new_uid();
-                    let client_state: &mut EchoClientState = state.substate_mut();
+            EchoClientAction::InitSuccess { .. } => {
+                let connection = state.new_uid();
+                let client_state: &mut EchoClientState = state.substate_mut();
 
-                    client_state.ready = true;
-                    connect(client_state, dispatcher, connection);
-                }
-                Err(error) => panic!("Client initialization failed: {}", error),
-            },
-            EchoClientAction::ConnectResult { connection, result } => {
-                let ConnectionResult::Outgoing(result) = result else {
+                client_state.status = EchoClientStatus::Connecting;
+                connect(client_state, connection, dispatcher);
+            }
+            EchoClientAction::InitError { error, .. } => {
+                panic!("Client initialization failed: {}", error)
+            }
+            EchoClientAction::ConnectSuccess { connection } => {
+                let EchoClientState {
+                    status,
+                    connection_attempt,
+                    ..
+                } = state.substate_mut();
+
+                if let EchoClientStatus::Connecting = status {
+                    *status = EchoClientStatus::Connected { connection };
+                    *connection_attempt = 0;
+                } else {
                     unreachable!()
-                };
+                }
+            }
+            EchoClientAction::ConnectTimeout { connection } => {
+                let new_connection_uid = state.new_uid();
+                let EchoClientState {
+                    status,
+                    connection_attempt,
+                    config:
+                        EchoClientConfig {
+                            max_connection_attempts,
+                            ..
+                        },
+                    ..
+                } = state.substate_mut();
 
-                match result {
-                    ConnectResult::Success => {
-                        let client_state: &mut EchoClientState = state.substate_mut();
+                if let EchoClientStatus::Connecting = status {
+                    *connection_attempt += 1;
 
-                        client_state.connection_attempt = 0;
-                        client_state.connection = Some(connection);
-                    }
-                    ConnectResult::Timeout => {
-                        let new_connection_uid = state.new_uid();
+                    warn!(
+                        "|ECHO_CLIENT| connection {:?} timeout, reconnection attempt {}",
+                        connection, connection_attempt
+                    );
 
-                        reconnect(
-                            state.substate_mut(),
-                            dispatcher,
-                            connection,
-                            new_connection_uid,
-                            "timeout".to_string(),
-                        )
-                    }
-                    ConnectResult::Error(error) => {
-                        let new_connection_uid = state.new_uid();
+                    assert!(connection_attempt < max_connection_attempts);
+                    connect(state.substate_mut(), new_connection_uid, dispatcher);
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::ConnectError { connection, error } => {
+                let new_connection_uid = state.new_uid();
+                let EchoClientState {
+                    status,
+                    connection_attempt,
+                    config:
+                        EchoClientConfig {
+                            max_connection_attempts,
+                            ..
+                        },
+                    ..
+                } = state.substate_mut();
 
-                        reconnect(
-                            state.substate_mut(),
-                            dispatcher,
-                            connection,
-                            new_connection_uid,
-                            error,
-                        )
-                    }
+                if let EchoClientStatus::Connecting = status {
+                    *connection_attempt += 1;
+
+                    warn!(
+                        "|ECHO_CLIENT| connection {:?} error: {}, reconnection attempt {}",
+                        connection, error, connection_attempt
+                    );
+
+                    assert!(connection_attempt < max_connection_attempts);
+                    connect(state.substate_mut(), new_connection_uid, dispatcher);
+                } else {
+                    unreachable!()
                 }
             }
             EchoClientAction::CloseEvent { connection } => {
                 info!("|ECHO_CLIENT| connection {:?} closed", connection);
 
-                let connection = state.new_uid();
+                let new_connection_uid = state.new_uid();
                 let client_state: &mut EchoClientState = state.substate_mut();
 
-                client_state.connection = None;
-                connect(client_state, dispatcher, connection);
+                client_state.status = EchoClientStatus::Connecting;
+                connect(client_state, new_connection_uid, dispatcher);
             }
-            EchoClientAction::PollResult { uid, result, .. } => match result {
-                Ok(_) => {
-                    // Send random data on every poll if there are no pending send/recv requests.
-                    if let EchoClientState {
-                        connection: Some(connection),
-                        send_request: None,
-                        recv_request: None,
-                        config: EchoClientConfig { max_send_size, .. },
-                        ..
-                    } = state.substate()
-                    {
-                        send_random_data_to_server(state, dispatcher, *connection, *max_send_size)
-                    }
-                }
-                Err(error) => panic!("Poll {:?} failed: {}", uid, error),
-            },
-            EchoClientAction::SendResult { uid, result } => {
-                let client_state: &mut EchoClientState = state.substate_mut();
-                let connection = client_state
-                    .connection
-                    .expect("client not connected during SendResult action");
-                let request = client_state
-                    .send_request
-                    .take()
-                    .expect("no SendRequest for this SendResult");
+            EchoClientAction::PollSuccess { .. } => {
+                // Send random data on every poll if there are no pending send/recv requests.
+                if let EchoClientState {
+                    status: EchoClientStatus::Connected { connection },
+                    config: EchoClientConfig { max_send_size, .. },
+                    ..
+                } = state.substate()
+                {
+                    let connection = *connection;
+                    let max_send_size = *max_send_size;
+                    let request = state.new_uid();
+                    let prng: &mut PRNGState = state.substate_mut();
+                    let random_size = prng.rng.gen_range(1..max_send_size) as usize;
+                    let mut data: Vec<u8> = vec![0; random_size];
 
-                assert_eq!(request.uid, uid);
+                    prng.rng.fill_bytes(&mut data[..]);
 
-                match result {
-                    // if random data was sent successfully, we wait for the server's response
-                    SendResult::Success => recv_from_server_with_random_timeout(
-                        state,
-                        dispatcher,
+                    state.substate_mut::<EchoClientState>().status = EchoClientStatus::Sending {
                         connection,
-                        request.data,
-                    ),
-                    SendResult::Timeout => {
-                        dispatcher.dispatch(TcpClientAction::Close { connection });
-                        warn!("|ECHO_CLIENT| send {:?} timeout", uid)
-                    }
-                    SendResult::Error(error) => {
-                        warn!("|ECHO_CLIENT| send {:?} error: {:?}", uid, error)
-                    }
-                };
+                        request,
+                        data: data.clone(),
+                    };
+
+                    dispatcher.dispatch(TcpClientAction::Send {
+                        uid: request,
+                        connection,
+                        data: data.into(),
+                        timeout: Timeout::Millis(200),
+                        on_success: callback!(|uid: Uid| EchoClientAction::SendSuccess { uid }),
+                        on_timeout: callback!(|uid: Uid| EchoClientAction::SendTimeout { uid }),
+                        on_error: callback!(|(uid: Uid, error: String)| EchoClientAction::SendError { uid, error })
+                    });
+                }
             }
-            EchoClientAction::RecvResult { uid, result } => {
-                let client_state: &mut EchoClientState = state.substate_mut();
-                let connection = client_state
-                    .connection
-                    .expect("client not connected during RecvResult action");
-                let request = client_state
-                    .recv_request
-                    .take()
-                    .expect("no RecvRequest for this RecvResult");
+            EchoClientAction::PollError { uid, error } => {
+                panic!("Poll {:?} failed: {}", uid, error)
+            }
+            EchoClientAction::SendSuccess { uid } => {
+                // Receive back what we sent
+                if let EchoClientState {
+                    status:
+                        EchoClientStatus::Sending {
+                            connection,
+                            request,
+                            data,
+                        },
+                    config:
+                        EchoClientConfig {
+                            min_rnd_timeout,
+                            max_rnd_timeout,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+                    let sent_data = data.clone();
+                    let count = data.len();
 
-                assert_eq!(request.uid, uid);
+                    // We randomize client's recv timeout to force it fail sometimes
+                    let timeout_range = *min_rnd_timeout..*max_rnd_timeout;
+                    let prng: &mut PRNGState = state.substate_mut();
+                    let timeout = Timeout::Millis(prng.rng.gen_range(timeout_range));
 
-                match result {
-                    RecvResult::Success(data_received) => {
-                        let data_sent = request.data.as_ref();
+                    let request = state.new_uid();
 
-                        if data_sent != data_received {
-                            panic!(
-                                "Data mismatch:\nsent({:?})\nreceived({:?})",
-                                data_sent, data_received
-                            )
-                        }
-                        info!("|ECHO_CLIENT| recv {:?} data matches what was sent", uid);
+                    info!(
+                        "|ECHO_CLIENT| dispatching recv request {:?} ({} bytes) from connection {:?} with timeout {:?}",
+                        request, count, connection, timeout
+                    );
+
+                    state.substate_mut::<EchoClientState>().status = EchoClientStatus::Receiving {
+                        connection,
+                        request,
+                        sent_data,
+                    };
+
+                    dispatcher.dispatch(TcpClientAction::Recv {
+                        uid: request,
+                        connection,
+                        count,
+                        timeout,
+                        on_success: callback!(|(uid: Uid, data: Vec<u8>)| EchoClientAction::RecvSuccess { uid, data }),
+                        on_timeout: callback!(|(uid: Uid, partial_data: Vec<u8>)| EchoClientAction::RecvTimeout { uid, partial_data }),
+                        on_error: callback!(|(uid: Uid, error: String)| EchoClientAction::RecvError { uid, error }),
+                    });
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::SendTimeout { uid } => {
+                if let EchoClientState {
+                    status: EchoClientStatus::Sending { connection, .. },
+                    ..
+                } = state.substate()
+                {
+                    let connection = *connection;
+                    warn!(
+                        "|ECHO_CLIENT| send {:?} timeout to connection {:?}",
+                        uid, connection
+                    );
+                    dispatcher.dispatch(TcpClientAction::Close { connection })
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::SendError { uid, error } => {
+                if let EchoClientState {
+                    status: EchoClientStatus::Sending { connection, .. },
+                    ..
+                } = state.substate()
+                {
+                    warn!(
+                        "|ECHO_CLIENT| send {:?} to connection {:?} error: {}",
+                        uid, connection, error
+                    );
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::RecvSuccess { uid, data } => {
+                if let EchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            sent_data,
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    if *sent_data != data {
+                        panic!("Data mismatch: {:?} != {:?}", sent_data, data)
                     }
-                    RecvResult::Timeout(_) => {
-                        dispatcher.dispatch(TcpClientAction::Close { connection });
-                        warn!("|ECHO_CLIENT| recv {:?} timeout", uid)
-                    }
-                    RecvResult::Error(error) => {
-                        warn!("|ECHO_CLIENT| recv {:?} error: {:?}", uid, error)
-                    }
+
+                    state.substate_mut::<EchoClientState>().status =
+                        EchoClientStatus::Connected { connection };
+
+                    info!(
+                        "|ECHO_CLIENT| recv {:?} from connection {:?}, data matches.",
+                        uid, connection
+                    );
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::RecvTimeout { uid, .. } => {
+                if let EchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    warn!(
+                        "|ECHO_CLIENT| recv {:?} timeout from connection {:?}",
+                        uid, connection
+                    );
+                    dispatcher.dispatch(TcpClientAction::Close { connection })
+                } else {
+                    unreachable!()
+                }
+            }
+            EchoClientAction::RecvError { uid, error } => {
+                if let EchoClientState {
+                    status:
+                        EchoClientStatus::Receiving {
+                            connection,
+                            request,
+                            ..
+                        },
+                    ..
+                } = state.substate()
+                {
+                    assert_eq!(uid, *request);
+                    let connection = *connection;
+
+                    warn!(
+                        "|ECHO_CLIENT| recv {:?} from connection {:?} error: {}",
+                        uid, connection, error
+                    );
+                } else {
+                    unreachable!()
                 }
             }
         }
     }
 }
 
-fn connect(client_state: &EchoClientState, dispatcher: &mut Dispatcher, connection: Uid) {
+fn connect(client_state: &EchoClientState, connection: Uid, dispatcher: &mut Dispatcher) {
     let EchoClientState {
         config:
             EchoClientConfig {
                 connect_to_address,
-                connect_timeout: timeout,
+                connect_timeout,
                 ..
             },
         ..
@@ -259,107 +415,10 @@ fn connect(client_state: &EchoClientState, dispatcher: &mut Dispatcher, connecti
     dispatcher.dispatch(TcpClientAction::Connect {
         connection,
         address: connect_to_address.clone(),
-        timeout: timeout.clone(),
-        on_close_connection: callback!(|connection: Uid| {
-            EchoClientAction::CloseEvent { connection }
-        }),
-        on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
-            EchoClientAction::ConnectResult { connection, result }
-        }),
+        timeout: connect_timeout.clone(),
+        on_success: callback!(|connection: Uid| EchoClientAction::ConnectSuccess { connection }),
+        on_timeout: callback!(|connection: Uid| EchoClientAction::ConnectTimeout { connection }),
+        on_error: callback!(|(connection: Uid, error: String)| EchoClientAction::ConnectError { connection, error }),
+        on_close: callback!(|connection: Uid| EchoClientAction::CloseEvent { connection })
     });
-}
-
-fn reconnect(
-    client_state: &mut EchoClientState,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    new_connection_uid: Uid,
-    error: String,
-) {
-    client_state.connection_attempt += 1;
-
-    warn!(
-        "|ECHO_CLIENT| connection {:?} error: {}, reconnection attempt {}",
-        connection, error, client_state.connection_attempt
-    );
-
-    if client_state.connection_attempt == client_state.config.max_connection_attempts {
-        panic!(
-            "Max reconnection attempts: {}",
-            client_state.config.max_connection_attempts
-        )
-    }
-
-    connect(client_state, dispatcher, new_connection_uid);
-}
-
-fn send_random_data_to_server<Substate: ModelState>(
-    state: &mut State<Substate>,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    max_send_size: u64,
-) {
-    let prng_state: &mut PRNGState = state.substate_mut();
-    let rnd_len = prng_state.rng.gen_range(1..max_send_size) as usize;
-    let mut random_data: Vec<u8> = vec![0; rnd_len];
-
-    prng_state.rng.fill_bytes(&mut random_data[..]);
-
-    let request = SendRequest {
-        uid: state.new_uid(),
-        data: random_data.into(),
-    };
-
-    dispatcher.dispatch(TcpClientAction::Send {
-        uid: request.uid.clone(),
-        connection,
-        data: request.data.clone(),
-        timeout: Timeout::Millis(200),
-        on_result: callback!(|(uid: Uid, result: SendResult)| {
-            EchoClientAction::SendResult { uid, result }
-        }),
-    });
-
-    state.substate_mut::<EchoClientState>().send_request = Some(request);
-}
-
-fn recv_from_server_with_random_timeout<Substate: ModelState>(
-    state: &mut State<Substate>,
-    dispatcher: &mut Dispatcher,
-    connection: Uid,
-    data: Rc<[u8]>,
-) {
-    let uid = state.new_uid();
-    let EchoClientState {
-        config:
-            EchoClientConfig {
-                min_rnd_timeout,
-                max_rnd_timeout,
-                ..
-            },
-        ..
-    } = state.substate();
-
-    // We randomize client's recv timeout to force it fail sometimes
-    let timeout_range = *min_rnd_timeout..*max_rnd_timeout;
-    let prng_state: &mut PRNGState = state.substate_mut();
-    let timeout = Timeout::Millis(prng_state.rng.gen_range(timeout_range));
-    let count = data.len();
-
-    info!(
-        "|ECHO_CLIENT| dispatching recv request {:?} ({} bytes) from connection {:?} with timeout {:?}",
-        uid, count, connection, timeout
-    );
-
-    dispatcher.dispatch(TcpClientAction::Recv {
-        uid,
-        connection,
-        count,
-        timeout,
-        on_result: callback!(|(uid: Uid, result: RecvResult)| {
-            EchoClientAction::RecvResult { uid, result }
-        }),
-    });
-
-    state.substate_mut::<EchoClientState>().recv_request = Some(RecvRequest { uid, data });
 }

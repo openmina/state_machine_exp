@@ -10,12 +10,9 @@ use crate::{
         state::{ModelState, State, Uid},
     },
     callback,
-    models::pure::{
-        net::tcp::{
-            action::{ConnectionResult, RecvResult, SendResult, TcpAction},
-            state::TcpState,
-        },
-        net::tcp_client::state::Connection,
+    models::pure::net::{
+        tcp::{action::TcpAction, state::TcpState},
+        tcp_client::state::Connection,
     },
 };
 
@@ -41,149 +38,183 @@ impl PureModel for TcpClientState {
             TcpClientAction::Poll {
                 uid,
                 timeout,
-                on_result,
+                on_success,
+                on_error,
             } => dispatcher.dispatch(TcpAction::Poll {
                 uid,
                 objects: Vec::new(),
                 timeout,
-                on_result,
+                on_success,
+                on_error,
             }),
             TcpClientAction::Connect {
                 connection,
                 address,
                 timeout,
-                on_close_connection,
-                on_result,
+                on_success,
+                on_timeout,
+                on_error,
+                on_close,
             } => {
-                state.substate_mut::<TcpClientState>().new_connection(
-                    connection,
-                    on_close_connection,
-                    on_result,
-                );
+                state
+                    .substate_mut::<TcpClientState>()
+                    .new_connection(connection, on_success, on_timeout, on_error, on_close);
 
                 dispatcher.dispatch(TcpAction::Connect {
                     connection,
                     address,
                     timeout,
-                    on_result: callback!(|(connection: Uid, result: ConnectionResult)| {
-                        TcpClientAction::ConnectResult { connection, result }
-                    }),
+                    on_success: callback!(|connection: Uid| TcpClientAction::ConnectSuccess { connection }),
+                    on_timeout: callback!(|connection: Uid| TcpClientAction::ConnectTimeout { connection }),
+                    on_error: callback!(|(connection: Uid, error: String)| TcpClientAction::ConnectError { connection, error }),
                 });
             }
-            TcpClientAction::ConnectResult { connection, result } => {
-                let Connection { on_result, .. } = state
-                    .substate_mut::<TcpClientState>()
+            TcpClientAction::ConnectSuccess { connection } => {
+                let Connection { on_success, .. } = state
+                    .substate::<TcpClientState>()
                     .get_connection(&connection);
 
-                dispatcher.dispatch_back(on_result, (connection, result));
+                dispatcher.dispatch_back(on_success, connection);
+            }
+            TcpClientAction::ConnectTimeout { connection } => {
+                let Connection { on_timeout, .. } = state
+                    .substate::<TcpClientState>()
+                    .get_connection(&connection);
+
+                dispatcher.dispatch_back(on_timeout, connection);
+            }
+            TcpClientAction::ConnectError { connection, error } => {
+                let Connection { on_error, .. } = state
+                    .substate::<TcpClientState>()
+                    .get_connection(&connection);
+
+                dispatcher.dispatch_back(on_error, (connection, error));
             }
             TcpClientAction::Close { connection } => dispatcher.dispatch(TcpAction::Close {
                 connection,
-                on_result: callback!(|connection: Uid| {
-                    TcpClientAction::CloseResult {
-                        connection,
-                        notify: true,
-                    }
+                on_success: callback!(|connection: Uid| TcpClientAction::CloseEventNotify {
+                    connection
                 }),
             }),
-            TcpClientAction::CloseResult { connection, notify } => {
+            TcpClientAction::CloseEventNotify { connection } => {
                 let client_state: &mut TcpClientState = state.substate_mut();
-                let Connection {
-                    on_close_connection,
-                    ..
-                } = client_state.get_connection(&connection);
+                let Connection { on_close, .. } = client_state.get_connection(&connection);
 
-                if notify {
-                    dispatcher.dispatch_back(&on_close_connection, connection);
-                }
-
+                dispatcher.dispatch_back(&on_close, connection);
                 client_state.remove_connection(&connection);
+            }
+            TcpClientAction::CloseEventInternal { connection } => {
+                state
+                    .substate_mut::<TcpClientState>()
+                    .remove_connection(&connection);
             }
             TcpClientAction::Send {
                 uid,
                 connection,
                 data,
                 timeout,
-                on_result,
+                on_success,
+                on_timeout,
+                on_error,
             } => {
                 state
                     .substate_mut::<TcpClientState>()
-                    .new_send_request(&uid, connection, on_result);
+                    .new_send_request(&uid, connection, on_success, on_timeout, on_error);
 
                 dispatcher.dispatch(TcpAction::Send {
                     uid,
                     connection,
                     data,
                     timeout,
-                    on_result: callback!(|(uid: Uid, result: SendResult)| {
-                        TcpClientAction::SendResult { uid, result }
-                    }),
+                    on_success: callback!(|uid: Uid| TcpClientAction::SendSuccess { uid }),
+                    on_timeout: callback!(|uid: Uid| TcpClientAction::SendTimeout { uid }),
+                    on_error: callback!(|(uid: Uid, error: String)| TcpClientAction::SendError { uid, error }),
                 });
             }
-            TcpClientAction::SendResult { uid, result } => {
+            TcpClientAction::SendSuccess { uid } => {
+                let SendRequest { on_success, .. } = state
+                    .substate_mut::<TcpClientState>()
+                    .take_send_request(&uid);
+
+                dispatcher.dispatch_back(&on_success, uid)
+            }
+            TcpClientAction::SendTimeout { uid } => {
+                let SendRequest { on_timeout, .. } = state
+                    .substate_mut::<TcpClientState>()
+                    .take_send_request(&uid);
+
+                dispatcher.dispatch_back(&on_timeout, uid)
+            }
+            TcpClientAction::SendError { uid, error } => {
                 let SendRequest {
                     connection,
-                    on_result,
+                    on_error,
+                    ..
                 } = state
                     .substate_mut::<TcpClientState>()
                     .take_send_request(&uid);
 
-                if let SendResult::Error(_) = result {
-                    dispatcher.dispatch(TcpAction::Close {
-                        connection,
-                        on_result: callback!(|connection: Uid| {
-                            TcpClientAction::CloseResult {
-                                connection,
-                                notify: true,
-                            }
-                        }),
-                    });
-                }
-
-                dispatcher.dispatch_back(&on_result, (uid, result))
+                dispatcher.dispatch_back(&on_error, (uid, error));
+                dispatcher.dispatch(TcpAction::Close {
+                    connection,
+                    on_success: callback!(|connection: Uid| TcpClientAction::CloseEventNotify {
+                        connection
+                    }),
+                })   
             }
             TcpClientAction::Recv {
                 uid,
                 connection,
                 count,
                 timeout,
-                on_result,
+                on_success,
+                on_timeout,
+                on_error,
             } => {
                 state
                     .substate_mut::<TcpClientState>()
-                    .new_recv_request(&uid, connection, on_result);
+                    .new_recv_request(&uid, connection, on_success, on_timeout, on_error);
 
                 dispatcher.dispatch(TcpAction::Recv {
                     uid,
                     connection,
                     count,
                     timeout,
-                    on_result: callback!(|(uid: Uid, result: RecvResult)| {
-                        TcpClientAction::RecvResult { uid, result }
-                    }),
+                    on_success: callback!(|(uid: Uid, data: Vec<u8>)| TcpClientAction::RecvSuccess { uid, data }),
+                    on_timeout: callback!(|(uid: Uid, partial_data: Vec<u8>)| TcpClientAction::RecvTimeout { uid, partial_data }),
+                    on_error: callback!(|(uid: Uid, error: String)| TcpClientAction::RecvError { uid, error }),
                 });
             }
-            TcpClientAction::RecvResult { uid, result } => {
+            TcpClientAction::RecvSuccess { uid, data } => {
+                let RecvRequest { on_success, .. } = state
+                    .substate_mut::<TcpClientState>()
+                    .take_recv_request(&uid);
+
+                dispatcher.dispatch_back(&on_success, (uid, data))
+            }
+            TcpClientAction::RecvTimeout { uid, partial_data } => {
+                let RecvRequest { on_timeout, .. } = state
+                    .substate_mut::<TcpClientState>()
+                    .take_recv_request(&uid);
+
+                dispatcher.dispatch_back(&on_timeout, (uid, partial_data))
+            }
+            TcpClientAction::RecvError { uid, error } => {
                 let RecvRequest {
                     connection,
-                    on_result,
+                    on_error,
+                    ..
                 } = state
                     .substate_mut::<TcpClientState>()
                     .take_recv_request(&uid);
 
-                if let RecvResult::Error(_) = result {
-                    dispatcher.dispatch(TcpAction::Close {
-                        connection,
-                        on_result: callback!(|connection: Uid| {
-                            TcpClientAction::CloseResult {
-                                connection,
-                                notify: true,
-                            }
-                        }),
-                    });
-                }
-
-                dispatcher.dispatch_back(&on_result, (uid, result))
+                dispatcher.dispatch_back(&on_error, (uid, error));
+                dispatcher.dispatch(TcpAction::Close {
+                    connection,
+                    on_success: callback!(|connection: Uid| TcpClientAction::CloseEventNotify {
+                        connection
+                    }),
+                })
             }
         }
     }

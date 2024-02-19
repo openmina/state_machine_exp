@@ -3,7 +3,7 @@ use crate::{
         action::{self, Action, ActionKind, Redispatch, Timeout},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::TcpPollEvents,
 };
 use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -16,24 +16,35 @@ pub enum TcpClientAction {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_close_connection: Redispatch<Uid>,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+        on_close: Redispatch<Uid>,
     },
-    ConnectResult {
+    ConnectSuccess {
         connection: Uid,
-        result: ConnectionResult,
+    },
+    ConnectTimeout {
+        connection: Uid,
+    },
+    ConnectError {
+        connection: Uid,
+        error: String,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, TcpPollResult)>,
+        on_success: Redispatch<(Uid, TcpPollEvents)>,
+        on_error: Redispatch<(Uid, String)>,
     },
     Close {
         connection: Uid,
     },
-    CloseResult {
+    CloseEventNotify {
         connection: Uid,
-        notify: bool,
+    },
+    CloseEventInternal {
+        connection: Uid,
     },
     Send {
         uid: Uid,
@@ -44,22 +55,40 @@ pub enum TcpClientAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    SendResult {
+    SendSuccess {
         uid: Uid,
-        result: SendResult,
+    },
+    SendTimeout {
+        uid: Uid,
+    },
+    SendError {
+        uid: Uid,
+        error: String,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    RecvResult {
+    RecvSuccess {
         uid: Uid,
-        result: RecvResult,
+        data: Vec<u8>,
+    },
+    RecvTimeout {
+        uid: Uid,
+        partial_data: Vec<u8>,
+    },
+    RecvError {
+        uid: Uid,
+        error: String,
     },
 }
 

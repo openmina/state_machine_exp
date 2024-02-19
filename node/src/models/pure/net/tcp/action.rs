@@ -1,6 +1,6 @@
 use crate::{
     automaton::{
-        action::{self, Action, ActionKind, OrError, Redispatch, Timeout},
+        action::{self, Action, ActionKind, Redispatch, Timeout},
         state::Uid,
     },
     models::effectful::mio::action::MioEvent,
@@ -14,7 +14,8 @@ use type_uuid::TypeUuid;
 pub enum TcpAction {
     Init {
         instance: Uid,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollCreateSuccess {
         poll: Uid,
@@ -27,9 +28,10 @@ pub enum TcpAction {
         uid: Uid,
     },
     Listen {
-        tcp_listener: Uid,
+        listener: Uid,
         address: String,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     ListenSuccess {
         listener: Uid,
@@ -48,7 +50,9 @@ pub enum TcpAction {
     Accept {
         connection: Uid,
         listener: Uid,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
+        on_success: Redispatch<Uid>,
+        on_would_block: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     AcceptSuccess {
         connection: Uid,
@@ -64,7 +68,9 @@ pub enum TcpAction {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     ConnectSuccess {
         connection: Uid,
@@ -97,16 +103,17 @@ pub enum TcpAction {
     },
     Close {
         connection: Uid,
-        on_result: Redispatch<Uid>,
+        on_success: Redispatch<Uid>,
     },
-    CloseResult {
+    CloseSuccess {
         connection: Uid,
     },
     Poll {
         uid: Uid,
         objects: Vec<Uid>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, TcpPollResult)>,
+        on_success: Redispatch<(Uid, TcpPollEvents)>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollSuccess {
         uid: Uid,
@@ -128,14 +135,16 @@ pub enum TcpAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     SendSuccess {
         uid: Uid,
     },
     SendSuccessPartial {
         uid: Uid,
-        written: usize,
+        count: usize,
     },
     SendErrorInterrupted {
         uid: Uid,
@@ -152,7 +161,9 @@ pub enum TcpAction {
         connection: Uid,
         count: usize,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     },
     RecvSuccess {
         uid: Uid,
@@ -160,7 +171,7 @@ pub enum TcpAction {
     },
     RecvSuccessPartial {
         uid: Uid,
-        data: Vec<u8>,
+        partial_data: Vec<u8>,
     },
     RecvErrorInterrupted {
         uid: Uid,
@@ -177,6 +188,8 @@ pub enum TcpAction {
 impl Action for TcpAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
+
+pub type TcpPollEvents = Vec<(Uid, Event)>;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ListenerEvent {
@@ -198,8 +211,6 @@ pub enum Event {
     Listener(ListenerEvent),
     Connection(ConnectionEvent),
 }
-
-pub type TcpPollResult = OrError<Vec<(Uid, Event)>>;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum RecvResult {

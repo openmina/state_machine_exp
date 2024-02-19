@@ -1,9 +1,9 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind, OrError},
+        action::{Action, ActionKind},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::TcpPollEvents,
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
@@ -12,29 +12,20 @@ use type_uuid::TypeUuid;
 #[uuid = "6f8ab34b-2f20-49ff-a4a5-3573ff86fc61"]
 pub enum EchoClientAction {
     Tick,
-    InitResult {
-        instance: Uid,
-        result: OrError<()>,
-    },
-    ConnectResult {
-        connection: Uid,
-        result: ConnectionResult,
-    },
-    CloseEvent {
-        connection: Uid,
-    },
-    PollResult {
-        uid: Uid,
-        result: TcpPollResult,
-    },
-    RecvResult {
-        uid: Uid,
-        result: RecvResult,
-    },
-    SendResult {
-        uid: Uid,
-        result: SendResult,
-    },
+    PollSuccess { uid: Uid, events: TcpPollEvents },
+    PollError { uid: Uid, error: String },
+    InitSuccess { instance: Uid },
+    InitError { instance: Uid, error: String },
+    ConnectSuccess { connection: Uid },
+    ConnectTimeout { connection: Uid },
+    ConnectError { connection: Uid, error: String },
+    CloseEvent { connection: Uid },
+    SendSuccess { uid: Uid },
+    SendTimeout { uid: Uid },
+    SendError { uid: Uid, error: String },
+    RecvSuccess { uid: Uid, data: Vec<u8> },
+    RecvTimeout { uid: Uid, partial_data: Vec<u8> },
+    RecvError { uid: Uid, error: String },
 }
 
 impl Action for EchoClientAction {

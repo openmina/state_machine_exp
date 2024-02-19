@@ -1,5 +1,4 @@
 use crate::automaton::{action::Timeout, state::Uid};
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct EchoClientConfig {
@@ -14,25 +13,27 @@ pub struct EchoClientConfig {
 }
 
 #[derive(Debug)]
-pub struct SendRequest {
-    pub uid: Uid,
-    pub data: Rc<[u8]>,
-}
-
-#[derive(Debug)]
-pub struct RecvRequest {
-    pub uid: Uid,
-    // this contains the data of a previous SendRequest,
-    // when we receive data it should match the contents of `data`.
-    pub data: Rc<[u8]>,
+pub enum EchoClientStatus {
+    Init,
+    Connecting,
+    Connected {
+        connection: Uid,
+    },
+    Sending {
+        connection: Uid,
+        request: Uid,
+        data: Vec<u8>,
+    },
+    Receiving {
+        connection: Uid,
+        request: Uid,
+        sent_data: Vec<u8>,
+    },
 }
 
 #[derive(Debug)]
 pub struct EchoClientState {
-    pub ready: bool,
-    pub connection: Option<Uid>,
-    pub send_request: Option<SendRequest>,
-    pub recv_request: Option<RecvRequest>,
+    pub status: EchoClientStatus,
     pub connection_attempt: usize,
     pub config: EchoClientConfig,
 }
@@ -40,10 +41,7 @@ pub struct EchoClientState {
 impl EchoClientState {
     pub fn from_config(config: EchoClientConfig) -> Self {
         Self {
-            ready: false,
-            connection: None,
-            send_request: None,
-            recv_request: None,
+            status: EchoClientStatus::Init,
             connection_attempt: 0,
             config,
         }

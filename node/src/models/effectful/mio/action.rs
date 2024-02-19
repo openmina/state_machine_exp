@@ -1,5 +1,5 @@
 use crate::automaton::{
-    action::{self, Action, ActionKind, OrError, Redispatch, Timeout},
+    action::{self, Action, ActionKind, Redispatch, Timeout},
     state::Uid,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -26,53 +26,63 @@ use type_uuid::TypeUuid;
 pub enum MioEffectfulAction {
     PollCreate {
         poll: Uid,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollRegisterTcpServer {
         poll: Uid,         // created by PollCreate
         listener: Uid, // created by TcpListen
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollRegisterTcpConnection {
         poll: Uid,       // created by PollCreate
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollDeregisterTcpConnection {
         poll: Uid,       // created by PollCreate
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     PollEvents {
         uid: Uid,    // passed back to call-back action to identify the request
         poll: Uid,   // created by PollCreate
         events: Uid, // created by EventsCreate
         timeout: Timeout,
-        on_result: Redispatch<(Uid, PollResult)>,
+        on_success: Redispatch<(Uid, Vec<MioEvent>)>,
+        on_interrupted: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     EventsCreate {
         uid: Uid,
         capacity: usize,
-        on_result: Redispatch<Uid>,
+        on_success: Redispatch<Uid>,
     },
     TcpListen {
         listener: Uid,
         address: String,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     TcpAccept {
         connection: Uid,
         listener: Uid, // created by TcpListen
-        on_result: Redispatch<(Uid, TcpAcceptResult)>,
+        on_success: Redispatch<Uid>,
+        on_would_block: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     TcpConnect {
         connection: Uid,
         address: String,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     TcpClose {
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: Redispatch<Uid>,
+        on_success: Redispatch<Uid>,
     },
     TcpWrite {
         uid: Uid,        // passed back to call-back action to identify the request
@@ -85,17 +95,26 @@ pub enum MioEffectfulAction {
             deserialize_with = "action::deserialize_rc_bytes"
         )]
         data: Rc<[u8]>,
-        on_result: Redispatch<(Uid, TcpWriteResult)>,
+        on_success: Redispatch<Uid>,
+        on_success_partial: Redispatch<(Uid, usize)>,
+        on_interrupted: Redispatch<Uid>,
+        on_would_block: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     TcpRead {
         uid: Uid,        // passed back to call-back action to identify the request
         connection: Uid, // created by TcpAccept/TcpConnect
         len: usize,      // max number of bytes to read
-        on_result: Redispatch<(Uid, TcpReadResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_success_partial: Redispatch<(Uid, Vec<u8>)>,
+        on_interrupted: Redispatch<Uid>,
+        on_would_block: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     TcpGetPeerAddress {
         connection: Uid, // created by TcpAccept/TcpConnect
-        on_result: Redispatch<(Uid, OrError<String>)>,
+        on_success: Redispatch<(Uid, String)>,
+        on_error: Redispatch<(Uid, String)>,
     },
 }
 

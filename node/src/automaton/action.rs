@@ -25,8 +25,6 @@ pub enum TimeoutAbsolute {
     Never,
 }
 
-pub type OrError<T> = Result<T, String>;
-
 pub fn serialize_rc_bytes<S>(data: &Rc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

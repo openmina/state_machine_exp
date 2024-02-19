@@ -1,33 +1,36 @@
-use crate::{
-    automaton::{
-        action::{OrError, Redispatch},
-        state::{Objects, Uid},
-    },
-    models::pure::net::tcp::action::{RecvResult, SendResult},
+use crate::automaton::{
+    action::Redispatch,
+    state::{Objects, Uid},
 };
 use std::{collections::BTreeSet, mem};
 
 #[derive(Debug)]
-pub struct Server {
+pub struct Listener {
     pub max_connections: usize,
+    pub on_success: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
     pub on_new_connection: Redispatch<(Uid, Uid)>,
-    pub on_close_connection: Redispatch<(Uid, Uid)>,
-    pub on_result: Redispatch<(Uid, OrError<()>)>,
+    pub on_connection_closed: Redispatch<(Uid, Uid)>,
+    pub on_listener_closed: Redispatch<Uid>,
     pub connections: BTreeSet<Uid>,
 }
 
-impl Server {
+impl Listener {
     pub fn new(
         max_connections: usize,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
         on_new_connection: Redispatch<(Uid, Uid)>,
-        on_close_connection: Redispatch<(Uid, Uid)>,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_connection_closed: Redispatch<(Uid, Uid)>,
+        on_listener_closed: Redispatch<Uid>,
     ) -> Self {
         Self {
             max_connections,
             on_new_connection,
-            on_close_connection,
-            on_result,
+            on_success,
+            on_error,
+            on_connection_closed,
+            on_listener_closed,
             connections: BTreeSet::new(),
         }
     }
@@ -40,23 +43,28 @@ impl Server {
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: Redispatch<(Uid, SendResult)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_timeout: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: Redispatch<(Uid, RecvResult)>,
+    pub on_success: Redispatch<(Uid, Vec<u8>)>,
+    pub on_timeout: Redispatch<(Uid, Vec<u8>)>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 #[derive(Debug)]
 pub struct PollRequest {
-    pub on_result: Redispatch<(Uid, OrError<()>)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 #[derive(Debug)]
 pub struct TcpServerState {
-    pub server_objects: Objects<Server>,
+    pub listeners: Objects<Listener>,
     pub send_requests: Objects<SendRequest>,
     pub recv_requests: Objects<RecvRequest>,
     pub poll_request: Option<PollRequest>,
@@ -65,7 +73,7 @@ pub struct TcpServerState {
 impl TcpServerState {
     pub fn new() -> Self {
         Self {
-            server_objects: Objects::<Server>::new(),
+            listeners: Objects::<Listener>::new(),
             send_requests: Objects::<SendRequest>::new(),
             recv_requests: Objects::<RecvRequest>::new(),
             poll_request: None,
@@ -85,7 +93,9 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .send_requests
@@ -93,7 +103,9 @@ impl TcpServerState {
                 *uid,
                 SendRequest {
                     connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
                 },
             )
             .is_some()
@@ -112,7 +124,9 @@ impl TcpServerState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .recv_requests
@@ -120,7 +134,9 @@ impl TcpServerState {
                 *uid,
                 RecvRequest {
                     connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
                 },
             )
             .is_some()
@@ -136,59 +152,66 @@ impl TcpServerState {
     }
 
     pub fn new_connection(&mut self, connection: Uid, listener: Uid) {
-        self.get_server_mut(&listener)
+        self.get_listener_mut(&listener)
             .connections
             .insert(connection);
     }
 
-    pub fn get_connection_server_mut(&mut self, connection: &Uid) -> (&Uid, &mut Server) {
-        self.server_objects
+    pub fn get_connection_listener_mut(&mut self, connection: &Uid) -> (&Uid, &mut Listener) {
+        self.listeners
             .iter_mut()
-            .find(|(_, server)| server.connections.contains(connection))
-            .expect(&format!("Server not found for connection {:?}", connection))
+            .find(|(_, listener)| listener.connections.contains(connection))
+            .expect(&format!(
+                "Listener not found for connection {:?}",
+                connection
+            ))
     }
 
-    pub fn new_server(
+    pub fn new_listener(
         &mut self,
-        server: Uid,
+        listener: Uid,
         max_connections: usize,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
         on_new_connection: Redispatch<(Uid, Uid)>,
-        on_close_connection: Redispatch<(Uid, Uid)>,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_connection_closed: Redispatch<(Uid, Uid)>,
+        on_listener_closed: Redispatch<Uid>,
     ) {
         if self
-            .server_objects
+            .listeners
             .insert(
-                server,
-                Server::new(
+                listener,
+                Listener::new(
                     max_connections,
+                    on_success,
+                    on_error,
                     on_new_connection,
-                    on_close_connection,
-                    on_result,
+                    on_connection_closed,
+                    on_listener_closed,
                 ),
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing {:?}", server)
+            panic!("Attempt to re-use existing {:?}", listener)
         }
     }
 
-    pub fn get_server(&self, server: &Uid) -> &Server {
-        self.server_objects
-            .get(server)
-            .expect(&format!("Server object {:?} not found", server))
+    pub fn get_listener(&self, listener: &Uid) -> &Listener {
+        self.listeners
+            .get(listener)
+            .expect(&format!("Listener object {:?} not found", listener))
     }
 
-    pub fn get_server_mut(&mut self, server: &Uid) -> &mut Server {
-        self.server_objects
-            .get_mut(server)
-            .expect(&format!("Server object {:?} not found", server))
+    pub fn get_listener_mut(&mut self, listener: &Uid) -> &mut Listener {
+        self.listeners
+            .get_mut(listener)
+            .expect(&format!("Listener object {:?} not found", listener))
     }
 
-    pub fn remove_server(&mut self, server: &Uid) {
-        self.server_objects.remove(server).expect(&format!(
-            "Attempt to remove an inexistent Server {:?}",
-            server
-        ));
+    pub fn remove_listener(&mut self, listener: &Uid) -> Listener {
+        self.listeners.remove(listener).expect(&format!(
+            "Attempt to remove an inexistent Listener {:?}",
+            listener
+        ))
     }
 }

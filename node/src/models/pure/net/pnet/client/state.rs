@@ -5,7 +5,6 @@ use crate::{
     },
     models::pure::net::{
         pnet::common::{ConnectionState, PnetKey},
-        tcp::action::{ConnectResult, RecvResult},
         tcp_client::state::RecvRequest,
     },
 };
@@ -13,8 +12,10 @@ use crate::{
 #[derive(Debug)]
 pub struct Connection {
     pub state: ConnectionState,
-    pub on_close_connection: Redispatch<Uid>,
-    pub on_result: Redispatch<(Uid, ConnectResult)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_timeout: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
+    pub on_close: Redispatch<Uid>,
 }
 
 #[derive(Debug)]
@@ -67,11 +68,28 @@ impl PnetClientState {
             ))
     }
 
+    pub fn find_connection_mut_by_nonce_request(&mut self, uid: &Uid) -> (&Uid, &mut Connection) {
+        self.connections
+            .iter_mut()
+            .find(|(_connection, Connection { state, .. })| match state {
+                ConnectionState::Init => false,
+                ConnectionState::NonceSent { send_request, .. } => send_request == uid,
+                ConnectionState::NonceWait { recv_request, .. } => recv_request == uid,
+                ConnectionState::Ready { .. } => false,
+            })
+            .expect(&format!(
+                "No connection object with nonce request {:?}",
+                uid
+            ))
+    }
+
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: Redispatch<Uid>,
-        on_result: Redispatch<(Uid, ConnectResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+        on_close: Redispatch<Uid>,
     ) {
         if self
             .connections
@@ -79,8 +97,10 @@ impl PnetClientState {
                 connection,
                 Connection {
                     state: ConnectionState::Init,
-                    on_close_connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
+                    on_close,
                 },
             )
             .is_some()
@@ -100,7 +120,9 @@ impl PnetClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .recv_requests
@@ -108,12 +130,14 @@ impl PnetClientState {
                 *uid,
                 RecvRequest {
                     connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
                 },
             )
             .is_some()
         {
-            panic!("Attempt to re-use existing {:?}", uid)
+            panic!("Attempt to re-use existing RecvRequest {:?}", uid)
         }
     }
 

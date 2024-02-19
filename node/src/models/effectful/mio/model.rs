@@ -1,4 +1,6 @@
-use super::action::{MioEffectfulAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult};
+use super::action::{
+    MioEffectfulAction, PollResult, TcpAcceptResult, TcpReadResult, TcpWriteResult,
+};
 use super::state::MioState;
 use crate::automaton::action::Dispatcher;
 use crate::automaton::model::{Effectful, EffectfulModel};
@@ -33,7 +35,11 @@ impl EffectfulModel for MioState {
 
     fn process_effectful(&mut self, action: Self::Action, dispatcher: &mut Dispatcher) {
         match action {
-            MioEffectfulAction::PollCreate { poll, on_result } => {
+            MioEffectfulAction::PollCreate {
+                poll,
+                on_success,
+                on_error,
+            } => {
                 // NOTE: use this pattern to inhibit side-effects when in replay mode
                 let result = if dispatcher.is_replayer() {
                     // This value is ignored and it is replaced by whatever it
@@ -43,25 +49,33 @@ impl EffectfulModel for MioState {
                     self.poll_create(poll)
                 };
 
-                dispatcher.dispatch_back(&on_result, (poll, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, poll),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (poll, error)),
+                }
             }
             MioEffectfulAction::PollRegisterTcpServer {
                 poll,
-                listener: tcp_listener,
-                on_result,
+                listener,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(()) // Ignored
                 } else {
-                    self.poll_register_tcp_server(&poll, tcp_listener)
+                    self.poll_register_tcp_server(&poll, listener)
                 };
 
-                dispatcher.dispatch_back(&on_result, (tcp_listener, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, listener),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (listener, error)),
+                }
             }
             MioEffectfulAction::PollRegisterTcpConnection {
                 poll,
                 connection,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(()) // Ignored
@@ -69,12 +83,16 @@ impl EffectfulModel for MioState {
                     self.poll_register_tcp_connection(&poll, connection)
                 };
 
-                dispatcher.dispatch_back(&on_result, (connection, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, connection),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (connection, error)),
+                }
             }
             MioEffectfulAction::PollDeregisterTcpConnection {
                 poll,
                 connection,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(()) // Ignored
@@ -82,64 +100,89 @@ impl EffectfulModel for MioState {
                     self.poll_deregister_tcp_connection(&poll, connection)
                 };
 
-                dispatcher.dispatch_back(&on_result, (connection, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, connection),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (connection, error)),
+                }
             }
             MioEffectfulAction::PollEvents {
                 uid,
                 poll,
                 events,
                 timeout,
-                on_result,
+                on_success,
+                on_interrupted,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     PollResult::Events(Vec::new()) // Ignored
                 } else {
                     self.poll_events(&poll, &events, timeout)
                 };
-
-                dispatcher.dispatch_back(&on_result, (uid, result));
+                match result {
+                    PollResult::Events(events) => {
+                        dispatcher.dispatch_back(&on_success, (uid, events))
+                    }
+                    PollResult::Interrupted => dispatcher.dispatch_back(&on_interrupted, uid),
+                    PollResult::Error(error) => dispatcher.dispatch_back(&on_error, (uid, error)),
+                }
             }
             MioEffectfulAction::EventsCreate {
                 uid,
                 capacity,
-                on_result,
+                on_success,
             } => {
                 if !dispatcher.is_replayer() {
                     self.events_create(uid, capacity);
                 }
 
-                dispatcher.dispatch_back(&on_result, uid);
+                dispatcher.dispatch_back(&on_success, uid);
             }
             MioEffectfulAction::TcpListen {
-                listener: tcp_listener,
+                listener,
                 address,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(()) // Ignored
                 } else {
-                    self.tcp_listen(tcp_listener, address)
+                    self.tcp_listen(listener, address)
                 };
 
-                dispatcher.dispatch_back(&on_result, (tcp_listener, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, listener),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (listener, error)),
+                }
             }
             MioEffectfulAction::TcpAccept {
                 connection,
-                listener: tcp_listener,
-                on_result,
+                listener,
+                on_success,
+                on_would_block,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     TcpAcceptResult::Success // Ignored
                 } else {
-                    self.tcp_accept(connection, &tcp_listener)
+                    self.tcp_accept(connection, &listener)
                 };
 
-                dispatcher.dispatch_back(&on_result, (connection, result));
+                match result {
+                    TcpAcceptResult::Success => dispatcher.dispatch_back(&on_success, connection),
+                    TcpAcceptResult::WouldBlock => {
+                        dispatcher.dispatch_back(&on_would_block, connection)
+                    }
+                    TcpAcceptResult::Error(error) => {
+                        dispatcher.dispatch_back(&on_error, (connection, error))
+                    }
+                }
             }
             MioEffectfulAction::TcpConnect {
                 connection,
                 address,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(()) // Ignored
@@ -147,23 +190,30 @@ impl EffectfulModel for MioState {
                     self.tcp_connect(connection, address)
                 };
 
-                dispatcher.dispatch_back(&on_result, (connection, result));
+                match result {
+                    Ok(_) => dispatcher.dispatch_back(&on_success, connection),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (connection, error)),
+                }
             }
             MioEffectfulAction::TcpClose {
                 connection,
-                on_result,
+                on_success,
             } => {
                 if !dispatcher.is_replayer() {
                     self.tcp_close(&connection);
                 }
 
-                dispatcher.dispatch_back(&on_result, connection);
+                dispatcher.dispatch_back(&on_success, connection);
             }
             MioEffectfulAction::TcpWrite {
                 uid,
                 connection: connection_uid,
                 data,
-                on_result,
+                on_success,
+                on_success_partial,
+                on_interrupted,
+                on_would_block,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     TcpWriteResult::WrittenAll // Ignored
@@ -171,25 +221,51 @@ impl EffectfulModel for MioState {
                     self.tcp_write(&connection_uid, &data)
                 };
 
-                dispatcher.dispatch_back(&on_result, (uid, result));
+                match result {
+                    TcpWriteResult::WrittenAll => dispatcher.dispatch_back(&on_success, uid),
+                    TcpWriteResult::WrittenPartial(count) => {
+                        dispatcher.dispatch_back(&on_success_partial, (uid, count))
+                    }
+                    TcpWriteResult::Interrupted => dispatcher.dispatch_back(&on_interrupted, uid),
+                    TcpWriteResult::WouldBlock => dispatcher.dispatch_back(&on_would_block, uid),
+                    TcpWriteResult::Error(error) => {
+                        dispatcher.dispatch_back(&on_error, (uid, error))
+                    }
+                }
             }
             MioEffectfulAction::TcpRead {
                 uid,
                 connection,
                 len,
-                on_result,
+                on_success,
+                on_success_partial,
+                on_interrupted,
+                on_would_block,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     TcpReadResult::ReadAll(Vec::new()) // Ignored
                 } else {
                     self.tcp_read(&connection, len)
                 };
-
-                dispatcher.dispatch_back(&on_result, (uid, result));
+                match result {
+                    TcpReadResult::ReadAll(data) => {
+                        dispatcher.dispatch_back(&on_success, (uid, data))
+                    }
+                    TcpReadResult::ReadPartial(partial_data) => {
+                        dispatcher.dispatch_back(&on_success_partial, (uid, partial_data))
+                    }
+                    TcpReadResult::Interrupted => dispatcher.dispatch_back(&on_interrupted, uid),
+                    TcpReadResult::WouldBlock => dispatcher.dispatch_back(&on_would_block, uid),
+                    TcpReadResult::Error(error) => {
+                        dispatcher.dispatch_back(&on_error, (uid, error))
+                    }
+                }
             }
             MioEffectfulAction::TcpGetPeerAddress {
                 connection,
-                on_result,
+                on_success,
+                on_error,
             } => {
                 let result = if dispatcher.is_replayer() {
                     Ok(String::new()) // Ignored
@@ -197,7 +273,10 @@ impl EffectfulModel for MioState {
                     self.tcp_peer_address(&connection)
                 };
 
-                dispatcher.dispatch_back(&on_result, (connection, result));
+                match result {
+                    Ok(address) => dispatcher.dispatch_back(&on_success, (connection, address)),
+                    Err(error) => dispatcher.dispatch_back(&on_error, (connection, error)),
+                }
             }
         }
     }

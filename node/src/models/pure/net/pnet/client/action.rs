@@ -3,7 +3,7 @@ use crate::{
         action::{Action, ActionKind, Redispatch, Timeout},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::TcpPollEvents,
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
@@ -11,21 +11,30 @@ use type_uuid::TypeUuid;
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "1a161896-de5f-46b2-8774-e60e8a34ef9f"]
 pub enum PnetClientAction {
+    Poll {
+        uid: Uid,
+        timeout: Timeout,
+        on_success: Redispatch<(Uid, TcpPollEvents)>,
+        on_error: Redispatch<(Uid, String)>,
+    },
     Connect {
         connection: Uid,
         address: String,
         timeout: Timeout,
-        on_close_connection: Redispatch<Uid>,
-        on_result: Redispatch<(Uid, ConnectResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+        on_close: Redispatch<Uid>,
     },
-    ConnectResult {
+    ConnectSuccess {
         connection: Uid,
-        result: ConnectResult,
     },
-    Poll {
-        uid: Uid,
-        timeout: Timeout,
-        on_result: Redispatch<(Uid, TcpPollResult)>,
+    ConnectTimeout {
+        connection: Uid,
+    },
+    ConnectError {
+        connection: Uid,
+        error: String,
     },
     Close {
         connection: Uid,
@@ -38,26 +47,53 @@ pub enum PnetClientAction {
         connection: Uid,
         data: Vec<u8>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    SendNonceResult {
+    // No need for SendSuccess, SendTimeout, or SendError actions because we forward the on_* callbacks
+    SendNonceSuccess {
         uid: Uid,
-        result: SendResult,
+    },
+    SendNonceTimeout {
+        uid: Uid,
+    },
+    SendNonceError {
+        uid: Uid,
+        error: String,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    RecvResult {
+    RecvSuccess {
         uid: Uid,
-        result: RecvResult,
+        data: Vec<u8>,
     },
-    RecvNonceResult {
+    RecvTimeout {
         uid: Uid,
-        result: RecvResult,
+        partial_data: Vec<u8>,
+    },
+    RecvError {
+        uid: Uid,
+        error: String,
+    },
+    RecvNonceSuccess {
+        uid: Uid,
+        nonce: Vec<u8>,
+    },
+    RecvNonceTimeout {
+        uid: Uid,
+        partial_data: Vec<u8>,
+    },
+    RecvNonceError {
+        uid: Uid,
+        error: String,
     },
 }
 

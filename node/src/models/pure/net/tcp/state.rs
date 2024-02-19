@@ -1,9 +1,7 @@
-use super::action::{
-    ConnectionEvent, ConnectionResult, Event, ListenerEvent, RecvResult, SendResult, TcpPollResult,
-};
+use super::action::{ConnectionEvent, Event, ListenerEvent, TcpPollEvents};
 use crate::{
     automaton::{
-        action::{self, OrError, Redispatch, Timeout, TimeoutAbsolute},
+        action::{self, Redispatch, Timeout, TimeoutAbsolute},
         state::{Objects, Uid},
     },
     models::effectful::mio::action::MioEvent,
@@ -22,15 +20,21 @@ pub trait EventUpdater {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Listener {
     pub address: String,
-    pub on_result: Redispatch<(Uid, OrError<()>)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
     pub events: Option<ListenerEvent>,
 }
 
 impl Listener {
-    pub fn new(address: String, on_result: Redispatch<(Uid, OrError<()>)>) -> Self {
+    pub fn new(
+        address: String,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+    ) -> Self {
         Self {
             address,
-            on_result,
+            on_success,
+            on_error,
             events: None,
         }
     }
@@ -76,64 +80,85 @@ impl EventUpdater for Listener {
 pub struct PollRequest {
     pub objects: Vec<Uid>,
     pub timeout: Timeout,
-    pub on_result: Redispatch<(Uid, TcpPollResult)>,
+    pub on_success: Redispatch<(Uid, TcpPollEvents)>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 impl PollRequest {
     pub fn new(
         objects: Vec<Uid>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, TcpPollResult)>,
+        on_success: Redispatch<(Uid, TcpPollEvents)>,
+        on_error: Redispatch<(Uid, String)>,
     ) -> Self {
         Self {
             objects,
             timeout,
-            on_result,
+            on_success,
+            on_error,
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum ConnectionDirection {
-    Incoming { listener: Uid },
-    Outgoing,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum ConnectionType {
+    Incoming {
+        listener: Uid,
+        on_success: Redispatch<Uid>,
+        on_would_block: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+    },
+    Outgoing {
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+    },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl ConnectionType {
+    pub fn on_success(&self) -> &Redispatch<Uid> {
+        match self {
+            ConnectionType::Incoming { on_success, .. } => on_success,
+            ConnectionType::Outgoing { on_success, .. } => on_success,
+        }
+    }
+
+    pub fn on_error(&self) -> &Redispatch<(Uid, String)> {
+        match self {
+            ConnectionType::Incoming { on_error, .. } => on_error,
+            ConnectionType::Outgoing { on_error, .. } => on_error,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionStatus {
     Pending,
     PendingCheck,
     Established,
-    CloseRequest {
-        maybe_on_result: Option<Redispatch<Uid>>,
-    },
+    CloseRequestInternal,
+    CloseRequestNotify { on_success: Redispatch<Uid> },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Connection {
     pub status: ConnectionStatus,
-    pub direction: ConnectionDirection,
+    pub conn_type: ConnectionType,
     pub timeout: TimeoutAbsolute,
-    pub on_result: Redispatch<(Uid, ConnectionResult)>,
     pub events: Option<ConnectionEvent>,
 }
 
 impl Connection {
-    pub fn new(
-        direction: ConnectionDirection,
-        timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
-    ) -> Self {
-        let status = match direction {
-            ConnectionDirection::Outgoing => ConnectionStatus::Pending,
-            ConnectionDirection::Incoming { .. } => ConnectionStatus::Established,
+    pub fn new(conn_type: ConnectionType, timeout: TimeoutAbsolute) -> Self {
+        let status = match conn_type {
+            ConnectionType::Outgoing { .. } => ConnectionStatus::Pending,
+            ConnectionType::Incoming { .. } => ConnectionStatus::Established,
         };
 
         Self {
             status,
-            direction,
+            conn_type,
             timeout,
-            on_result,
             events: None,
         }
     }
@@ -203,7 +228,9 @@ pub struct SendRequest {
     pub bytes_sent: usize,
     pub send_on_poll: bool,
     pub timeout: TimeoutAbsolute,
-    pub on_result: Redispatch<(Uid, SendResult)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_timeout: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 impl SendRequest {
@@ -212,7 +239,9 @@ impl SendRequest {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     ) -> Self {
         Self {
             connection,
@@ -220,7 +249,9 @@ impl SendRequest {
             bytes_sent: 0,
             send_on_poll,
             timeout,
-            on_result,
+            on_success,
+            on_timeout,
+            on_error,
         }
     }
 }
@@ -232,7 +263,9 @@ pub struct RecvRequest {
     pub remaining_bytes: usize,
     pub recv_on_poll: bool,
     pub timeout: TimeoutAbsolute,
-    pub on_result: Redispatch<(Uid, RecvResult)>,
+    pub on_success: Redispatch<(Uid, Vec<u8>)>,
+    pub on_timeout: Redispatch<(Uid, Vec<u8>)>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 impl RecvRequest {
@@ -241,7 +274,9 @@ impl RecvRequest {
         count: usize,
         recv_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     ) -> Self {
         Self {
             connection,
@@ -249,12 +284,14 @@ impl RecvRequest {
             remaining_bytes: count,
             recv_on_poll,
             timeout,
-            on_result,
+            on_success,
+            on_timeout,
+            on_error,
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Status {
     New,
     InitError {
@@ -263,13 +300,14 @@ pub enum Status {
     InitPollCreate {
         instance: Uid,
         poll: Uid,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
     InitEventsCreate {
         instance: Uid,
         poll: Uid,
         events: Uid,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
     },
     Ready {
         instance: Uid,
@@ -308,11 +346,12 @@ impl TcpState {
         &mut self,
         uid: Uid,
         address: String,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .listener_objects
-            .insert(uid, Listener::new(address, on_result))
+            .insert(uid, Listener::new(address, on_success, on_error))
             .is_some()
         {
             panic!("Attempt to re-use existing {:?}", uid)
@@ -324,7 +363,8 @@ impl TcpState {
         uid: Uid,
         objects: Vec<Uid>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, TcpPollResult)>,
+        on_success: Redispatch<(Uid, TcpPollEvents)>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         assert!(objects
             .iter()
@@ -333,7 +373,10 @@ impl TcpState {
 
         if self
             .poll_request_objects
-            .insert(uid, PollRequest::new(objects, timeout, on_result))
+            .insert(
+                uid,
+                PollRequest::new(objects, timeout, on_success, on_error),
+            )
             .is_some()
         {
             panic!("Attempt to re-use existing {:?}", uid)
@@ -343,13 +386,12 @@ impl TcpState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        direction: ConnectionDirection,
+        conn_type: ConnectionType,
         timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
     ) {
         if self
             .connection_objects
-            .insert(connection, Connection::new(direction, timeout, on_result))
+            .insert(connection, Connection::new(conn_type, timeout))
             .is_some()
         {
             panic!("Attempt to re-use existing {:?}", connection)
@@ -367,13 +409,23 @@ impl TcpState {
         data: Rc<[u8]>,
         send_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .send_request_objects
             .insert(
                 uid,
-                SendRequest::new(connection, data, send_on_poll, timeout, on_result),
+                SendRequest::new(
+                    connection,
+                    data,
+                    send_on_poll,
+                    timeout,
+                    on_success,
+                    on_timeout,
+                    on_error,
+                ),
             )
             .is_some()
         {
@@ -388,13 +440,23 @@ impl TcpState {
         count: usize,
         recv_on_poll: bool,
         timeout: TimeoutAbsolute,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .recv_request_objects
             .insert(
                 uid,
-                RecvRequest::new(connection, count, recv_on_poll, timeout, on_result),
+                RecvRequest::new(
+                    connection,
+                    count,
+                    recv_on_poll,
+                    timeout,
+                    on_success,
+                    on_timeout,
+                    on_error,
+                ),
             )
             .is_some()
         {

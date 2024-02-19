@@ -1,9 +1,9 @@
 use crate::{
     automaton::{
-        action::{self, Action, ActionKind, OrError, Redispatch, Timeout},
+        action::{self, Action, ActionKind, Redispatch, Timeout},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::TcpPollEvents,
 };
 use serde_derive::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -14,35 +14,53 @@ use type_uuid::TypeUuid;
 pub enum TcpServerAction {
     New {
         address: String,
-        server: Uid,
+        listener: Uid,
         max_connections: usize,
-        on_new_connection: Redispatch<(Uid, Uid)>, // (server_uid, new_connection_uid)
-        on_close_connection: Redispatch<(Uid, Uid)>, // (server_uid, connection_uid)
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+        on_new_connection: Redispatch<(Uid, Uid)>,
+        on_connection_closed: Redispatch<(Uid, Uid)>,
+        on_listener_closed: Redispatch<Uid>,
     },
-    NewResult {
-        server: Uid,
-        result: OrError<()>,
+    NewSuccess {
+        listener: Uid,
+    },
+    NewError {
+        listener: Uid,
+        error: String,
     },
     Poll {
         uid: Uid,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, OrError<()>)>,
+        on_success: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    PollResult {
+    PollSuccess {
         uid: Uid,
-        result: TcpPollResult,
+        events: TcpPollEvents,
     },
-    AcceptResult {
+    PollError {
+        uid: Uid,
+        error: String,
+    },
+    AcceptSuccess {
         connection: Uid,
-        result: ConnectionResult,
+    },
+    AcceptTryAgain {
+        connection: Uid,
+    },
+    AcceptError {
+        connection: Uid,
+        error: String,
     },
     Close {
         connection: Uid,
     },
-    CloseResult {
+    CloseEventNotify {
         connection: Uid,
-        notify: bool,
+    },
+    CloseEventInternal {
+        connection: Uid,
     },
     Send {
         uid: Uid,
@@ -53,22 +71,40 @@ pub enum TcpServerAction {
         )]
         data: Rc<[u8]>,
         timeout: Timeout,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    SendResult {
+    SendSuccess {
         uid: Uid,
-        result: SendResult,
+    },
+    SendTimeout {
+        uid: Uid,
+    },
+    SendError {
+        uid: Uid,
+        error: String,
     },
     Recv {
         uid: Uid,
         connection: Uid,
         count: usize, // number of bytes to read
         timeout: Timeout,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     },
-    RecvResult {
+    RecvSuccess {
         uid: Uid,
-        result: RecvResult,
+        data: Vec<u8>,
+    },
+    RecvTimeout {
+        uid: Uid,
+        partial_data: Vec<u8>,
+    },
+    RecvError {
+        uid: Uid,
+        error: String,
     },
 }
 

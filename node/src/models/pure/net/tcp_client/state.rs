@@ -1,27 +1,30 @@
-use crate::{
-    automaton::{
-        action::Redispatch,
-        state::{Objects, Uid},
-    },
-    models::pure::net::tcp::action::{ConnectionResult, RecvResult, SendResult},
+use crate::automaton::{
+    action::Redispatch,
+    state::{Objects, Uid},
 };
 
 #[derive(Debug)]
 pub struct Connection {
-    pub on_close_connection: Redispatch<Uid>,
-    pub on_result: Redispatch<(Uid, ConnectionResult)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_timeout: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
+    pub on_close: Redispatch<Uid>,
 }
 
 #[derive(Debug)]
 pub struct SendRequest {
     pub connection: Uid,
-    pub on_result: Redispatch<(Uid, SendResult)>,
+    pub on_success: Redispatch<Uid>,
+    pub on_timeout: Redispatch<Uid>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 #[derive(Debug)]
 pub struct RecvRequest {
     pub connection: Uid,
-    pub on_result: Redispatch<(Uid, RecvResult)>,
+    pub on_success: Redispatch<(Uid, Vec<u8>)>,
+    pub on_timeout: Redispatch<(Uid, Vec<u8>)>,
+    pub on_error: Redispatch<(Uid, String)>,
 }
 
 #[derive(Debug)]
@@ -48,16 +51,20 @@ impl TcpClientState {
     pub fn new_connection(
         &mut self,
         connection: Uid,
-        on_close_connection: Redispatch<Uid>,
-        on_result: Redispatch<(Uid, ConnectionResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
+        on_close: Redispatch<Uid>,
     ) {
         if self
             .connections
             .insert(
                 connection,
                 Connection {
-                    on_close_connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
+                    on_close,
                 },
             )
             .is_some()
@@ -77,7 +84,9 @@ impl TcpClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: Redispatch<(Uid, SendResult)>,
+        on_success: Redispatch<Uid>,
+        on_timeout: Redispatch<Uid>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .send_requests
@@ -85,7 +94,9 @@ impl TcpClientState {
                 *uid,
                 SendRequest {
                     connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
                 },
             )
             .is_some()
@@ -104,7 +115,9 @@ impl TcpClientState {
         &mut self,
         uid: &Uid,
         connection: Uid,
-        on_result: Redispatch<(Uid, RecvResult)>,
+        on_success: Redispatch<(Uid, Vec<u8>)>,
+        on_timeout: Redispatch<(Uid, Vec<u8>)>,
+        on_error: Redispatch<(Uid, String)>,
     ) {
         if self
             .recv_requests
@@ -112,7 +125,9 @@ impl TcpClientState {
                 *uid,
                 RecvRequest {
                     connection,
-                    on_result,
+                    on_success,
+                    on_timeout,
+                    on_error,
                 },
             )
             .is_some()
