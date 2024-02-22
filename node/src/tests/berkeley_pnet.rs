@@ -4,13 +4,13 @@ use crate::automaton::state::ModelState;
 use crate::models::pure::net::pnet::client::state::PnetClientConfig;
 use crate::models::pure::net::pnet::common::PnetKey;
 use crate::models::pure::prng::state::{PRNGConfig, PRNGState};
-use crate::models::pure::tests::simple_client_pnet::action::SimpleClientAction;
+use crate::models::pure::tests::simple_client_pnet::action::PnetSimpleClientAction;
 use crate::models::pure::{
     net::{
         pnet::client::state::PnetClientState, tcp::state::TcpState,
         tcp_client::state::TcpClientState,
     },
-    tests::simple_client_pnet::state::{SimpleClientConfig, SimpleClientState},
+    tests::simple_client_pnet::state::{PnetSimpleClientConfig, PnetSimpleClientState},
     time::state::TimeState,
 };
 use model_state_derive::ModelState;
@@ -23,11 +23,11 @@ pub struct PnetClient {
     pub tcp: TcpState,
     pub tcp_client: TcpClientState,
     pub pnet_client: PnetClientState,
-    pub client: SimpleClientState,
+    pub client: PnetSimpleClientState,
 }
 
 pub struct ClientConfig {
-    client: SimpleClientConfig,
+    client: PnetSimpleClientConfig,
     pnet: PnetClientConfig,
 }
 
@@ -39,14 +39,14 @@ impl PnetClient {
             tcp: TcpState::new(),
             tcp_client: TcpClientState::new(),
             pnet_client: PnetClientState::from_config(config.pnet),
-            client: SimpleClientState::from_config(config.client),
+            client: PnetSimpleClientState::from_config(config.client),
         }
     }
 }
 
 impl RegisterModel for PnetClient {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder.register::<SimpleClientState>()
+        builder.register::<PnetSimpleClientState>()
     }
 }
 
@@ -56,14 +56,15 @@ fn connect() {
         .register::<PnetClient>()
         .instance(
             PnetClient::from_config(ClientConfig {
-                client: SimpleClientConfig {
+                client: PnetSimpleClientConfig {
                     connect_to_address: "65.109.110.75:18302".to_string(),
                     connect_timeout: Timeout::Millis(2000),
                     poll_timeout: 1000,
                     max_connection_attempts: 10,
                     retry_interval_ms: 500,
-                    recv_size: 20,
                     send_data: b"\x13/multistream/1.0.0\n".to_vec(),
+                    recv_data: b"\x13/multistream/1.0.0\n".to_vec(),
+                    recv_timeout: Timeout::Millis(2000),
                 },
                 pnet: PnetClientConfig {
                     pnet_key: PnetKey::new(
@@ -73,7 +74,7 @@ fn connect() {
                     recv_nonce_timeout: Timeout::Millis(2000),
                 },
             }),
-            || SimpleClientAction::Tick.into(),
+            || PnetSimpleClientAction::Tick.into(),
         )
         .build()
         .run()

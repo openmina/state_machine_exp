@@ -1,42 +1,33 @@
 use crate::{
     automaton::{
-        action::{Action, ActionKind, OrError},
+        action::{Action, ActionKind},
         state::Uid,
     },
-    models::pure::net::tcp::action::{ConnectResult, RecvResult, SendResult, TcpPollResult},
+    models::pure::net::tcp::action::TcpPollEvents,
 };
 use serde_derive::{Deserialize, Serialize};
 use type_uuid::TypeUuid;
 
 #[derive(Clone, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Debug)]
 #[uuid = "fd4da055-71d2-4484-9009-93d5a7924a23"]
-pub enum SimpleClientAction {
+pub enum PnetSimpleClientAction {
     Tick,
-    InitResult {
-        instance: Uid,
-        result: OrError<()>,
-    },
-    ConnectResult {
-        connection: Uid,
-        result: ConnectResult,
-    },
-    CloseEvent {
-        connection: Uid,
-    },
-    PollResult {
-        uid: Uid,
-        result: TcpPollResult,
-    },
-    RecvResult {
-        uid: Uid,
-        result: RecvResult,
-    },
-    SendResult {
-        uid: Uid,
-        result: SendResult,
-    },
+    PollSuccess { uid: Uid, events: TcpPollEvents },
+    PollError { uid: Uid, error: String },
+    InitSuccess { instance: Uid },
+    InitError { instance: Uid, error: String },
+    ConnectSuccess { connection: Uid },
+    ConnectTimeout { connection: Uid },
+    ConnectError { connection: Uid, error: String },
+    CloseEvent { connection: Uid },
+    SendSuccess { uid: Uid },
+    SendTimeout { uid: Uid },
+    SendError { uid: Uid, error: String },
+    RecvSuccess { uid: Uid, data: Vec<u8> },
+    RecvTimeout { uid: Uid, partial_data: Vec<u8> },
+    RecvError { uid: Uid, error: String },
 }
 
-impl Action for SimpleClientAction {
+impl Action for PnetSimpleClientAction {
     const KIND: ActionKind = ActionKind::Pure;
 }
