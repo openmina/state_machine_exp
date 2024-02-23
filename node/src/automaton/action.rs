@@ -113,23 +113,28 @@ pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug +
 
 #[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct Redispatch<R> {
-    pub fun_name: String,
     #[serde(skip)]
-    result_type: std::marker::PhantomData<R>,
+    fun_ptr: Option<fn(R) -> AnyAction>,
+    pub fun_name: String,
 }
 
-impl<R> Redispatch<R> {
-    pub fn new(name: &str) -> Self {
+impl<R: 'static> Redispatch<R> {
+    pub fn new(name: &str, ptr: fn(R) -> AnyAction) -> Self {
         Self {
+            fun_ptr: Some(ptr),
             fun_name: name.to_string(),
-            result_type: Default::default(),
         }
     }
 
-    pub fn make<T: 'static>(&self, result: T) -> AnyAction {
+    pub fn make(&self, result: R) -> AnyAction {
+        if let Some(fun) = self.fun_ptr {
+            return fun(result);
+        }
+
+        // We reach this point only when `Redispatch` was deserialized
         for (name, fun) in CALLBACKS {
             if name == &self.fun_name {
-                return fun(std::any::type_name::<T>(), Box::new(result));
+                return fun(std::any::type_name::<R>(), Box::new(result));
             }
         }
 
@@ -306,6 +311,11 @@ macro_rules! _callback {
         use linkme::distributed_slice;
 
         paste::paste! {
+            #[allow(unused)] // $arg is marked as unused, but it's used in `$body`
+            fn convert_impl($arg: $arg_type) -> AnyAction {
+                ($body).into()
+            }
+
             fn $gensym(call_type: &str, args: Box<dyn std::any::Any>) -> AnyAction {
                 #[distributed_slice(CALLBACKS)]
                 static CALLBACK_DESERIALIZE: (&str, fn(&str, Box<dyn std::any::Any>) -> AnyAction) = (
@@ -319,11 +329,11 @@ macro_rules! _callback {
                         call_type,
                         stringify!($arg_type)));
 
-                ($body).into()
+                convert_impl($arg)
             }
         }
 
-        Redispatch::<$arg_type>::new(stringify!($gensym))
+        Redispatch::<$arg_type>::new(stringify!($gensym), convert_impl)
     }};
 }
 
