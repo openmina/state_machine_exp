@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_derive::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     collections::VecDeque,
     fmt,
     fs::{File, OpenOptions},
@@ -115,14 +116,14 @@ pub struct SerializableAction<T: Clone + type_uuid::TypeUuid + std::fmt::Debug +
 pub struct Redispatch<R> {
     #[serde(skip)]
     fun_ptr: Option<fn(R) -> AnyAction>,
-    pub fun_name: String,
+    pub fun_name: Cow<'static, str>,
 }
 
 impl<R: 'static> Redispatch<R> {
-    pub fn new(name: &str, ptr: fn(R) -> AnyAction) -> Self {
+    pub fn new(name: &'static str, ptr: fn(R) -> AnyAction) -> Self {
         Self {
             fun_ptr: Some(ptr),
-            fun_name: name.to_string(),
+            fun_name: Cow::Borrowed(name),
         }
     }
 
