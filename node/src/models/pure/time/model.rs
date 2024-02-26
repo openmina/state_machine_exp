@@ -1,7 +1,7 @@
 use super::{action::TimeAction, state::TimeState};
 use crate::automaton::runner::{RegisterModel, RunnerBuilder};
 use crate::models::effectful::time::{
-    action::TimeEffectfulAction, state::TimeState as IoTimeState,
+    action::TimeEffectfulAction, state::TimeState as TimeStateEffectful,
 };
 use crate::{
     automaton::{
@@ -15,7 +15,7 @@ use std::time::Duration;
 
 impl RegisterModel for TimeState {
     fn register<Substate: ModelState>(builder: RunnerBuilder<Substate>) -> RunnerBuilder<Substate> {
-        builder.register::<IoTimeState>().model_pure::<Self>()
+        builder.register::<TimeStateEffectful>().model_pure::<Self>()
     }
 }
 
